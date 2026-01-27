@@ -24,13 +24,25 @@ public:
         normalized.reserve(transcript.size());
         normalized = utils::normalize_copy(transcript);
         
-        // Check fast path rules
+        // Check fast path rules (whole word matching to avoid false positives)
         for (const auto& [pattern, response] : fast_path_rules_) {
-            if (normalized.find(pattern) != std::string::npos) {
-                plan.type = PlanType::Speak;
-                plan.answer_text = response;
-                plan.needs_llm = false;
-                return plan;
+            // Check for whole word match (word boundaries)
+            size_t pos = normalized.find(pattern);
+            while (pos != std::string::npos) {
+                // Check if it's at start or preceded by space/punctuation
+                bool start_ok = (pos == 0 || !std::isalnum(normalized[pos - 1]));
+                // Check if it's at end or followed by space/punctuation
+                size_t end_pos = pos + pattern.length();
+                bool end_ok = (end_pos >= normalized.length() || !std::isalnum(normalized[end_pos]));
+                
+                if (start_ok && end_ok) {
+                    plan.type = PlanType::Speak;
+                    plan.answer_text = response;
+                    plan.needs_llm = false;
+                    return plan;
+                }
+                // Continue searching
+                pos = normalized.find(pattern, pos + 1);
             }
         }
         

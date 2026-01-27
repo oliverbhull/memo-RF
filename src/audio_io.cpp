@@ -38,6 +38,14 @@ public:
             return false;
         }
         
+        // Verify input device is available
+        const PaDeviceInfo* input_info = Pa_GetDeviceInfo(input_idx);
+        if (!input_info || input_info->maxInputChannels == 0) {
+            Logger::error("Input device has no input channels: " + input_device);
+            Pa_Terminate();
+            return false;
+        }
+        
         // Find output device
         int output_idx = find_device(output_device, false);
         if (output_idx < 0) {
@@ -45,6 +53,22 @@ public:
             Pa_Terminate();
             return false;
         }
+        
+        // Verify output device is available
+        const PaDeviceInfo* output_info = Pa_GetDeviceInfo(output_idx);
+        if (!output_info || output_info->maxOutputChannels == 0) {
+            Logger::error("Output device has no output channels: " + output_device);
+            Pa_Terminate();
+            return false;
+        }
+        
+        // Log device info for debugging
+        std::ostringstream dev_oss;
+        dev_oss << "Using input device: [" << input_idx << "] " << input_info->name;
+        Logger::info(dev_oss.str());
+        std::ostringstream dev_oss2;
+        dev_oss2 << "Using output device: [" << output_idx << "] " << output_info->name;
+        Logger::info(dev_oss2.str());
         
         // Open input stream
         PaStreamParameters input_params;
@@ -81,7 +105,18 @@ public:
         
         err = Pa_StartStream(input_stream_);
         if (err != paNoError) {
-            Logger::error("Failed to start input stream: " + std::string(Pa_GetErrorText(err)));
+            std::ostringstream err_oss;
+            err_oss << "Failed to start input stream: " << Pa_GetErrorText(err);
+            err_oss << " (Error code: " << err << ")";
+            Logger::error(err_oss.str());
+            
+            // Provide helpful macOS-specific guidance
+            if (err == paUnanticipatedHostError) {
+                Logger::error("This may be a macOS permissions issue.");
+                Logger::error("Please check System Settings > Privacy & Security > Microphone");
+                Logger::error("and ensure Terminal/Cursor has microphone access.");
+            }
+            
             Pa_CloseStream(input_stream_);
             Pa_CloseStream(output_stream_);
             Pa_Terminate();

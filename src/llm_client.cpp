@@ -84,11 +84,20 @@ public:
                     json response_json = json::parse(response_buffer);
                     if (response_json.contains("content")) {
                         response_text = response_json["content"].get<std::string>();
+                        // Log raw response for debugging
+                        std::ostringstream raw_oss;
+                        raw_oss << "Raw LLM response: \"" << response_text << "\"";
+                        LOG_LLM(raw_oss.str());
                     } else {
                         error_msg = "No content in response";
+                        // Log the full response for debugging
+                        std::ostringstream debug_oss;
+                        debug_oss << "Response JSON (no content field): " << response_buffer;
+                        LOG_LLM(debug_oss.str());
                     }
                 } catch (const json::exception& e) {
                     error_msg = "JSON parse error: " + std::string(e.what());
+                    LOG_LLM(std::string("Response buffer: ") + response_buffer);
                 }
             }
             
@@ -133,7 +142,19 @@ public:
         }
         
         // Clean up response (remove newlines, make radio-style)
-        return clean_response(response_text);
+        std::string cleaned = clean_response(response_text);
+        
+        // If response is suspiciously short, log details for debugging
+        if (cleaned.length() < 10) {
+            std::ostringstream warn_oss;
+            warn_oss << "Warning: Response very short (" << cleaned.length() 
+                     << " chars): \"" << cleaned << "\"";
+            warn_oss << " (raw: \"" << response_text << "\")";
+            LOG_LLM(warn_oss.str());
+            LOG_LLM("This may indicate the model hit a stop sequence too early or max_tokens is too low.");
+        }
+        
+        return cleaned;
     }
     
     bool is_ready() const {
@@ -143,9 +164,11 @@ public:
 private:
     std::string build_prompt(const std::string& prompt, const std::string& context) {
         std::ostringstream oss;
-        oss << "You are a radio operator. Respond in ONE SHORT SENTENCE. Maximum 10 words. ";
-        oss << "No repetition. No filler. No meta-commentary. Just answer the question directly. ";
-        oss << "Stop immediately after answering. Do not continue talking. ";
+        
+        // Simpler, less restrictive prompt for GPT-OSS
+        // GPT-OSS works better with less aggressive constraints
+        oss << "You are a radio operator. Give brief, direct answers. ";
+        oss << "Keep responses concise (1-2 sentences, under 20 words). ";
         if (!context.empty()) {
             oss << "Context: " << context << " ";
         }
@@ -210,9 +233,10 @@ private:
             }
         }
         
-        // Truncate to first sentence or first 50 words, whichever comes first
+        // Truncate to first sentence or first 75 words, whichever comes first
+        // (increased from 50 to allow more complete answers)
         result = truncate_to_first_sentence(result);
-        result = truncate_to_max_words(result, 50);
+        result = truncate_to_max_words(result, 75);
         
         return result;
     }

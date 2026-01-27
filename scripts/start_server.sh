@@ -1,37 +1,121 @@
 #!/bin/bash
-# Start llama.cpp server with QWEN model
+# Start llama.cpp server with LLM model
 
 set -e
 
-MODEL_PATH="${1:-$HOME/models/llm/qwen2-1_5b-instruct-q5_k_m.gguf}"
+# Default model selection
+MODEL_CHOICE="${1:-qwen}"  # 'qwen' or 'gpt-oss'
 PORT="${2:-8080}"
+
+# Set model path based on choice
+case "$MODEL_CHOICE" in
+    qwen|qwen2)
+        MODEL_PATH="$HOME/models/llm/qwen2-1_5b-instruct-q5_k_m.gguf"
+        ;;
+    gpt-oss|gptoss)
+        MODEL_PATH="$HOME/models/llm/gpt-oss-20b-Q4_K_M.gguf"
+        ;;
+    *)
+        # Treat as direct path
+        MODEL_PATH="$MODEL_CHOICE"
+        ;;
+esac
 
 if [ ! -f "$MODEL_PATH" ]; then
     echo "Error: Model not found at: $MODEL_PATH"
     echo ""
-    echo "Usage: $0 [model_path] [port]"
-    echo "Example: $0 ~/models/llm/qwen2-1_5b-instruct-q5_k_m.gguf 8080"
+    echo "Usage: $0 [model_choice|model_path] [port]"
     echo ""
-    echo "To download a model, run: ./scripts/install_qwen.sh"
+    echo "Model choices:"
+    echo "  qwen     - QWEN2 1.5B (default)"
+    echo "  gpt-oss  - GPT-OSS 20B"
+    echo ""
+    echo "Or provide full path:"
+    echo "  $0 ~/models/llm/your-model.gguf 8080"
+    echo ""
+    echo "Examples:"
+    echo "  $0 qwen 8080"
+    echo "  $0 gpt-oss 8080"
     exit 1
 fi
 
-SERVER_BIN="/Users/oliverhull/dev/whisper.cpp/build/bin/whisper-server"
+# Try to find llama.cpp server binary
+# Common locations and names
+SERVER_BIN=""
+for path in \
+    "/Users/oliverhull/dev/llama.cpp/build/bin/llama-server" \
+    "/Users/oliverhull/dev/llama.cpp/build/bin/server" \
+    "/Users/oliverhull/dev/llama.cpp/bin/server" \
+    "/Users/oliverhull/dev/llama.cpp/server"; do
+    if [ -f "$path" ] && [ -x "$path" ]; then
+        SERVER_BIN="$path"
+        break
+    fi
+done
 
-if [ ! -f "$SERVER_BIN" ]; then
-    echo "Error: whisper-server not found at: $SERVER_BIN"
-    echo "Please build whisper.cpp first"
+if [ -z "$SERVER_BIN" ]; then
+    echo "Error: llama.cpp server binary not found"
+    echo ""
+    echo "Please build llama.cpp server:"
+    echo "  ./scripts/build_llama_server.sh"
+    echo ""
+    echo "Or manually:"
+    echo "  cd /Users/oliverhull/dev/llama.cpp"
+    echo "  cmake -B build -DLLAMA_SERVER=ON"
+    echo "  cmake --build build --config Release"
+    echo ""
     exit 1
 fi
 
 echo "Starting llama.cpp server..."
 echo "  Model: $MODEL_PATH"
 echo "  Port: $PORT"
+echo "  Server: $SERVER_BIN"
 echo ""
 
 cd "$(dirname "$SERVER_BIN")"
-./whisper-server \
-    -m "$MODEL_PATH" \
-    -c 2048 \
-    --port "$PORT" \
-    -ngl 35
+
+# Adjust GPU layers and context based on model size
+# GPT-OSS 20B is large - use fewer GPU layers to fit in memory
+if [[ "$MODEL_PATH" == *"gpt-oss-20b"* ]] || [[ "$MODEL_PATH" == *"gpt-oss"* ]]; then
+    # Large model: try CPU-only first, or very few GPU layers
+    # Check if user wants CPU-only mode
+    if [[ "${3:-}" == "cpu" ]] || [[ "${3:-}" == "--cpu" ]]; then
+        GPU_LAYERS=0
+        CONTEXT_SIZE=512
+        echo "  Large model detected - using CPU-only mode:"
+        echo "    GPU layers: 0 (CPU-only)"
+        echo "    Context size: $CONTEXT_SIZE"
+        echo "    Note: This will be slower but uses less memory"
+    else
+        # Try with minimal GPU layers
+        GPU_LAYERS=8
+        CONTEXT_SIZE=256
+        echo "  Large model detected - using minimal GPU settings:"
+        echo "    GPU layers: $GPU_LAYERS (very conservative)"
+        echo "    Context size: $CONTEXT_SIZE"
+        echo "    If still OOM, try: $0 $MODEL_CHOICE $PORT cpu"
+    fi
+else
+    # Smaller models (QWEN, etc.)
+    GPU_LAYERS=35
+    CONTEXT_SIZE=2048
+fi
+
+if [ "$GPU_LAYERS" -eq 0 ]; then
+    # CPU-only mode
+    "$SERVER_BIN" \
+        -m "$MODEL_PATH" \
+        -c "$CONTEXT_SIZE" \
+        --port "$PORT" \
+        --gpu-layers 0 \
+        --host 0.0.0.0
+else
+    # GPU mode
+    "$SERVER_BIN" \
+        -m "$MODEL_PATH" \
+        -c "$CONTEXT_SIZE" \
+        --port "$PORT" \
+        --gpu-layers "$GPU_LAYERS" \
+        --host 0.0.0.0
+fi
