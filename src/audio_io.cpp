@@ -224,10 +224,35 @@ private:
             }
         }
         
-        // Try exact match
+        // Try parsing as numeric device index
+        try {
+            int device_idx = std::stoi(name);
+            if (device_idx >= 0 && device_idx < num_devices) {
+                const PaDeviceInfo* info = Pa_GetDeviceInfo(device_idx);
+                if (info) {
+                    // Verify device type matches
+                    if (is_input && info->maxInputChannels > 0) {
+                        std::ostringstream oss;
+                        oss << "Using input device by index: [" << device_idx << "] " << info->name;
+                        Logger::debug(oss.str());
+                        return device_idx;
+                    }
+                    if (!is_input && info->maxOutputChannels > 0) {
+                        std::ostringstream oss;
+                        oss << "Using output device by index: [" << device_idx << "] " << info->name;
+                        Logger::debug(oss.str());
+                        return device_idx;
+                    }
+                }
+            }
+        } catch (const std::exception&) {
+            // Not a number, continue to name matching
+        }
+        
+        // Try exact name match
         for (int i = 0; i < num_devices; i++) {
             const PaDeviceInfo* info = Pa_GetDeviceInfo(i);
-            if (info->name == name) {
+            if (info && info->name == name) {
                 if (is_input && info->maxInputChannels > 0) {
                     std::ostringstream oss;
                     oss << "Found input device: [" << i << "] " << info->name;

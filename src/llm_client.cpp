@@ -5,6 +5,10 @@
 #include <thread>
 #include <chrono>
 #include <atomic>
+#include <vector>
+#include <algorithm>
+#include <cctype>
+#include <sstream>
 #include <nlohmann/json.hpp>
 
 using json = nlohmann::json;
@@ -139,8 +143,9 @@ public:
 private:
     std::string build_prompt(const std::string& prompt, const std::string& context) {
         std::ostringstream oss;
-        oss << "You are a radio operator. Keep responses short, direct, and under 8 seconds when spoken. ";
-        oss << "No pleasantries, just the answer. ";
+        oss << "You are a radio operator. Respond in ONE SHORT SENTENCE. Maximum 10 words. ";
+        oss << "No repetition. No filler. No meta-commentary. Just answer the question directly. ";
+        oss << "Stop immediately after answering. Do not continue talking. ";
         if (!context.empty()) {
             oss << "Context: " << context << " ";
         }
@@ -157,6 +162,34 @@ private:
         }
         while (!cleaned.empty() && std::isspace(cleaned.back())) {
             cleaned.pop_back();
+        }
+        
+        // Remove common repetitive patterns
+        std::vector<std::string> patterns_to_remove = {
+            "[end conversation]",
+            "[pause]",
+            "[end]",
+            "Remember,",
+            "Keep it",
+            "Let's keep",
+            "we're all in this together",
+            "Keep it smooth",
+            "Keep it clear",
+            "Keep it going"
+        };
+        
+        for (const auto& pattern : patterns_to_remove) {
+            size_t pos = 0;
+            while ((pos = cleaned.find(pattern, pos)) != std::string::npos) {
+                // Remove the pattern and any following punctuation/whitespace
+                cleaned.erase(pos, pattern.length());
+                // Remove trailing punctuation/whitespace after pattern
+                while (pos < cleaned.length() && 
+                       (std::isspace(cleaned[pos]) || cleaned[pos] == '.' || 
+                        cleaned[pos] == '!' || cleaned[pos] == '?')) {
+                    cleaned.erase(pos, 1);
+                }
+            }
         }
         
         // Replace newlines with spaces
@@ -177,7 +210,56 @@ private:
             }
         }
         
+        // Truncate to first sentence or first 50 words, whichever comes first
+        result = truncate_to_first_sentence(result);
+        result = truncate_to_max_words(result, 50);
+        
         return result;
+    }
+    
+    static std::string truncate_to_first_sentence(const std::string& text) {
+        // Find first sentence-ending punctuation
+        size_t period = text.find('.');
+        size_t exclamation = text.find('!');
+        size_t question = text.find('?');
+        
+        size_t first_end = std::string::npos;
+        if (period != std::string::npos) {
+            first_end = period;
+        }
+        if (exclamation != std::string::npos && 
+            (first_end == std::string::npos || exclamation < first_end)) {
+            first_end = exclamation;
+        }
+        if (question != std::string::npos && 
+            (first_end == std::string::npos || question < first_end)) {
+            first_end = question;
+        }
+        
+        if (first_end != std::string::npos) {
+            return text.substr(0, first_end + 1);
+        }
+        return text;
+    }
+    
+    static std::string truncate_to_max_words(const std::string& text, int max_words) {
+        std::istringstream iss(text);
+        std::vector<std::string> words;
+        std::string word;
+        
+        while (iss >> word && words.size() < static_cast<size_t>(max_words)) {
+            words.push_back(word);
+        }
+        
+        if (words.size() >= static_cast<size_t>(max_words)) {
+            std::ostringstream oss;
+            for (size_t i = 0; i < words.size(); ++i) {
+                if (i > 0) oss << " ";
+                oss << words[i];
+            }
+            return oss.str();
+        }
+        return text;
     }
     
     static size_t write_callback(void* contents, size_t size, size_t nmemb, void* userp) {
