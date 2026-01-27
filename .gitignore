@@ -1,0 +1,51 @@
+# Build artifacts
+build/
+*.o
+*.a
+*.so
+*.dylib
+*.exe
+*.dll
+
+# Session recordings and audio files
+sessions/
+*.wav
+*.mp3
+*.flac
+
+# Log files
+*.log
+
+# Temporary files
+/tmp/memo_rf_*
+*.tmp
+*.swp
+*~
+
+# IDE files
+.vscode/
+.idea/
+*.code-workspace
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Third-party dependencies
+third_party/
+
+# Model files (too large for git)
+models/
+*.bin
+*.onnx
+*.gguf
+*.ggml
+
+# User-specific config (use config.json.example as template)
+config/config.json
+
+# CMake cache
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+Makefile
