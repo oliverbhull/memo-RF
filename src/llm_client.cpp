@@ -19,10 +19,30 @@ class LLMClient::Impl {
 public:
     Impl(const LLMConfig& config) : config_(config), ready_(true) {
         curl_global_init(CURL_GLOBAL_DEFAULT);
+        is_ollama_ = config.endpoint.find("/api/chat") != std::string::npos;
     }
     
     ~Impl() {
         curl_global_cleanup();
+    }
+    
+    LLMResponse generate_with_tools(const std::string& prompt,
+                                   const std::string& tool_definitions_json,
+                                   const std::vector<std::string>& conversation_history,
+                                   int timeout_ms, int max_tokens) {
+        if (timeout_ms == 0) timeout_ms = config_.timeout_ms;
+        if (max_tokens == 0) max_tokens = config_.max_tokens;
+        
+        LLMResponse response;
+        
+        if (is_ollama_) {
+            return generate_ollama_chat(prompt, tool_definitions_json, conversation_history, 
+                                       timeout_ms, max_tokens);
+        } else {
+            // Fallback to legacy format
+            response.content = generate(prompt, "", timeout_ms, max_tokens);
+            return response;
+        }
     }
     
     std::string generate(const std::string& prompt, const std::string& context,
@@ -162,6 +182,208 @@ public:
     }
 
 private:
+    LLMResponse generate_ollama_chat(const std::string& prompt,
+                                    const std::string& tool_definitions_json,
+                                    const std::vector<std::string>& conversation_history,
+                                    int timeout_ms, int max_tokens) {
+        LLMResponse response;
+        
+        // Build messages array
+        json messages = json::array();
+        
+        // Add system message first (always, it should be first)
+        json system_msg;
+        system_msg["role"] = "system";
+        system_msg["content"] = "You are a radio operator. Give brief, direct answers. "
+                                "Keep responses concise (1-2 sentences, under 20 words).";
+        messages.push_back(system_msg);
+        
+        // Add conversation history (which should start with user message, then assistant/tool messages)
+        for (const auto& msg : conversation_history) {
+            try {
+                json msg_json = json::parse(msg);
+                // Skip system messages from history (we add it above)
+                if (msg_json.contains("role") && msg_json["role"] == "system") {
+                    continue;
+                }
+                messages.push_back(msg_json);
+            } catch (const json::exception& e) {
+                Logger::warn("Failed to parse conversation history message: " + std::string(e.what()));
+            }
+        }
+        
+        // Add user message only if prompt is provided and not already in history
+        // (This handles the case where conversation_history is empty)
+        if (!prompt.empty()) {
+            // Check if last message in history is already a user message with this content
+            bool already_has_user = false;
+            if (!conversation_history.empty()) {
+                try {
+                    json last_msg = json::parse(conversation_history.back());
+                    if (last_msg.contains("role") && last_msg["role"] == "user" && 
+                        last_msg.contains("content") && last_msg["content"] == prompt) {
+                        already_has_user = true;
+                    }
+                } catch (...) {
+                    // Ignore parse errors
+                }
+            }
+            if (!already_has_user) {
+                json user_msg;
+                user_msg["role"] = "user";
+                user_msg["content"] = prompt;
+                messages.push_back(user_msg);
+            }
+        }
+        
+        // Build request
+        json request;
+        request["model"] = config_.model_name;
+        request["messages"] = messages;
+        request["temperature"] = config_.temperature;
+        request["stream"] = false;
+        
+        // Add tools if provided
+        if (!tool_definitions_json.empty()) {
+            try {
+                json tools = json::parse(tool_definitions_json);
+                request["tools"] = tools;
+                request["tool_choice"] = "auto";
+            } catch (const json::exception& e) {
+                Logger::warn("Failed to parse tool definitions: " + std::string(e.what()));
+            }
+        }
+        
+        std::string request_json = request.dump();
+        
+        // Make HTTP request
+        std::atomic<bool> request_complete(false);
+        std::string response_buffer;
+        std::string error_msg;
+        
+        std::thread request_thread([&]() {
+            LOG_LLM(std::string("Starting Ollama chat request to: ") + config_.endpoint);
+            CURL* curl = curl_easy_init();
+            if (!curl) {
+                error_msg = "Failed to initialize CURL";
+                request_complete = true;
+                return;
+            }
+            
+            struct curl_slist* headers = nullptr;
+            headers = curl_slist_append(headers, "Content-Type: application/json");
+            
+            curl_easy_setopt(curl, CURLOPT_URL, config_.endpoint.c_str());
+            curl_easy_setopt(curl, CURLOPT_POSTFIELDS, request_json.c_str());
+            curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
+            curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_callback);
+            curl_easy_setopt(curl, CURLOPT_WRITEDATA, &response_buffer);
+            curl_easy_setopt(curl, CURLOPT_TIMEOUT_MS, timeout_ms);
+            curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT_MS, 1000);
+            
+            LOG_LLM(std::string("Sending Ollama request: ") + request_json);
+            CURLcode res = curl_easy_perform(curl);
+            
+            if (res != CURLE_OK) {
+                error_msg = curl_easy_strerror(res);
+            } else {
+                try {
+                    json response_json = json::parse(response_buffer);
+                    
+                    // Debug: log full response for troubleshooting
+                    LOG_LLM(std::string("Ollama response: ") + response_buffer);
+                    
+                    // Parse response
+                    if (response_json.contains("message")) {
+                        json message = response_json["message"];
+                        
+                        // Get content
+                        if (message.contains("content") && !message["content"].is_null()) {
+                            response.content = message["content"].get<std::string>();
+                        }
+                        
+                        // Parse tool calls
+                        if (message.contains("tool_calls") && message["tool_calls"].is_array()) {
+                            static int tool_call_counter = 0;  // Generate IDs if Ollama doesn't provide them
+                            for (const auto& tool_call : message["tool_calls"]) {
+                                ToolCall tc;
+                                if (tool_call.contains("id") && !tool_call["id"].is_null()) {
+                                    std::string id_str = tool_call["id"].get<std::string>();
+                                    if (!id_str.empty()) {
+                                        tc.id = id_str;
+                                    } else {
+                                        // Generate ID if empty
+                                        tc.id = "call_" + std::to_string(++tool_call_counter);
+                                    }
+                                } else {
+                                    // Generate ID if missing
+                                    tc.id = "call_" + std::to_string(++tool_call_counter);
+                                }
+                                if (tool_call.contains("function")) {
+                                    json func = tool_call["function"];
+                                    if (func.contains("name")) {
+                                        tc.name = func["name"].get<std::string>();
+                                    }
+                                    if (func.contains("arguments")) {
+                                        // Ollama returns arguments as object, convert to JSON string
+                                        if (func["arguments"].is_string()) {
+                                            tc.arguments = func["arguments"].get<std::string>();
+                                        } else if (func["arguments"].is_object() || func["arguments"].is_array()) {
+                                            tc.arguments = func["arguments"].dump();
+                                        } else {
+                                            // Fallback: convert to string
+                                            tc.arguments = func["arguments"].dump();
+                                        }
+                                    }
+                                }
+                                if (!tc.name.empty()) {
+                                    response.tool_calls.push_back(tc);
+                                }
+                            }
+                        }
+                    } else {
+                        error_msg = "No message in Ollama response";
+                    }
+                } catch (const json::exception& e) {
+                    error_msg = "JSON parse error: " + std::string(e.what());
+                    LOG_LLM(std::string("Response buffer: ") + response_buffer);
+                }
+            }
+            
+            curl_slist_free_all(headers);
+            curl_easy_cleanup(curl);
+            request_complete = true;
+        });
+        
+        // Wait with timeout
+        auto start = std::chrono::steady_clock::now();
+        while (!request_complete) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+            auto elapsed = std::chrono::steady_clock::now() - start;
+            if (std::chrono::duration_cast<std::chrono::milliseconds>(elapsed).count() > timeout_ms) {
+                LOG_LLM("Ollama request timeout");
+                request_thread.detach();
+                response.content = "Stand by.";
+                return response;
+            }
+        }
+        
+        request_thread.join();
+        
+        if (!error_msg.empty()) {
+            LOG_LLM(std::string("Ollama error: ") + error_msg);
+            response.content = "Error. Stand by.";
+            return response;
+        }
+        
+        // Clean content if present
+        if (!response.content.empty()) {
+            response.content = clean_response(response.content);
+        }
+        
+        return response;
+    }
+    
     std::string build_prompt(const std::string& prompt, const std::string& context) {
         std::ostringstream oss;
         
@@ -233,10 +455,9 @@ private:
             }
         }
         
-        // Truncate to first sentence or first 75 words, whichever comes first
-        // (increased from 50 to allow more complete answers)
-        result = truncate_to_first_sentence(result);
-        result = truncate_to_max_words(result, 75);
+        // For Ollama responses, don't truncate to first sentence (they're already concise)
+        // Just limit to max words to prevent extremely long responses
+        result = truncate_to_max_words(result, 100);  // Increased from 75
         
         return result;
     }
@@ -295,6 +516,7 @@ private:
     
     LLMConfig config_;
     bool ready_;
+    bool is_ollama_;
 };
 
 LLMClient::LLMClient(const LLMConfig& config) 
@@ -302,9 +524,26 @@ LLMClient::LLMClient(const LLMConfig& config)
 
 LLMClient::~LLMClient() = default;
 
+LLMResponse LLMClient::generate_with_tools(const std::string& prompt,
+                                          const std::string& tool_definitions_json,
+                                          const std::vector<std::string>& conversation_history,
+                                          int timeout_ms, int max_tokens) {
+    return pimpl_->generate_with_tools(prompt, tool_definitions_json, conversation_history,
+                                      timeout_ms, max_tokens);
+}
+
 std::string LLMClient::generate(const std::string& prompt, const std::string& context,
                                 int timeout_ms, int max_tokens) {
     return pimpl_->generate(prompt, context, timeout_ms, max_tokens);
+}
+
+std::string LLMClient::format_tool_result(const std::string& tool_call_id, 
+                                         const std::string& result_content) {
+    json result_msg;
+    result_msg["role"] = "tool";
+    result_msg["tool_call_id"] = tool_call_id;
+    result_msg["content"] = result_content;
+    return result_msg.dump();
 }
 
 bool LLMClient::is_ready() const {

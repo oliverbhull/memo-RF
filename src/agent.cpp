@@ -11,11 +11,20 @@
 #include "logger.h"
 #include "utils.h"
 #include "common.h"
+#include "tool_registry.h"
+#include "tool_executor.h"
+#include "tools/log_memo_tool.h"
+#include "tools/external_research_tool.h"
+#include "tools/internal_search_tool.h"
 #include <thread>
 #include <atomic>
 #include <chrono>
 #include <cmath>
 #include <sstream>
+#include <vector>
+#include <nlohmann/json.hpp>
+
+using json = nlohmann::json;
 
 namespace memo_rf {
 
@@ -24,7 +33,10 @@ public:
     Impl(const Config& config) 
         : config_(config), running_(true), initialized_(false),
           transmission_end_time_(std::chrono::steady_clock::now()),
-          previous_state_(State::IdleListening) {}
+          previous_state_(State::IdleListening),
+          speech_frame_count_(0),
+          speech_start_time_(std::chrono::steady_clock::now()),
+          last_speech_log_time_(std::chrono::steady_clock::now()) {}
     
     ~Impl() {
         shutdown();
@@ -67,6 +79,31 @@ public:
         Logger::info("Starting session recording...");
         recorder_->start_session();
         Logger::info("Session recording started");
+        
+        // Initialize tool system
+        Logger::info("Initializing tool system...");
+        tool_registry_ = std::make_unique<ToolRegistry>();
+        tool_executor_ = std::make_unique<ToolExecutor>(
+            tool_registry_.get(), 
+            config_.tools.max_concurrent
+        );
+        
+        // Register tools based on config
+        for (const auto& tool_name : config_.tools.enabled) {
+            if (tool_name == "log_memo") {
+                auto tool = std::make_shared<LogMemoTool>(config_.session_log_dir);
+                tool_registry_->register_tool(tool);
+            } else if (tool_name == "external_research") {
+                auto tool = std::make_shared<ExternalResearchTool>();
+                tool_registry_->register_tool(tool);
+            } else if (tool_name == "internal_search") {
+                auto tool = std::make_shared<InternalSearchTool>(config_.session_log_dir);
+                tool_registry_->register_tool(tool);
+            } else {
+                Logger::warn("Unknown tool name in config: " + tool_name);
+            }
+        }
+        Logger::info("Tool system initialized with " + std::to_string(tool_registry_->size()) + " tools");
         
         initialized_ = true;
         return true;
@@ -209,6 +246,9 @@ private:
         
         if (vad_event == VADEvent::SpeechStart) {
             handle_speech_start(current_state);
+            speech_frame_count_ = 0; // Reset speech frame counter
+            speech_start_time_ = std::chrono::steady_clock::now(); // Track when speech started
+            last_speech_log_time_ = speech_start_time_; // Initialize last log time
             current_utterance.clear();
             current_utterance = vad_->get_current_segment();
         } else if (vad_event == VADEvent::SpeechEnd) {
@@ -218,6 +258,24 @@ private:
             // Continue accumulating if in ReceivingSpeech
             if (current_state == State::ReceivingSpeech) {
                 current_utterance = vad_->get_current_segment();
+                speech_frame_count_++;
+                
+                // Log periodically to show speech is happening (~every 1 second)
+                auto now = std::chrono::steady_clock::now();
+                auto elapsed_since_last_log = std::chrono::duration_cast<std::chrono::milliseconds>(
+                    now - last_speech_log_time_).count();
+                
+                if (elapsed_since_last_log >= 1000) { // Log every 1 second
+                    auto speech_duration = std::chrono::duration_cast<std::chrono::milliseconds>(
+                        now - speech_start_time_).count();
+                    std::ostringstream oss;
+                    oss << "Receiving speech... (" << speech_duration << "ms)";
+                    Logger::info(oss.str());
+                    last_speech_log_time_ = now;
+                }
+            } else {
+                // Reset counter when not in ReceivingSpeech
+                speech_frame_count_ = 0;
             }
         }
     }
@@ -330,15 +388,125 @@ private:
             LOG_ROUTER("LLM path - skipping acknowledgment, going straight to response");
         }
         
-        // Generate LLM response
+        // Generate LLM response with tool support
         auto llm_start = std::chrono::steady_clock::now();
         std::string llm_prompt = transcript.text;
         recorder_->record_llm_prompt(llm_prompt, utterance_id);
         
+        // Get tool definitions for LLM (only if tools are enabled)
+        std::string tool_definitions;
+        if (tool_registry_ && tool_registry_->size() > 0) {
+            tool_definitions = tool_registry_->get_tool_definitions_json();
+        }
+        
         LOG_LLM(std::string("Calling LLM with prompt: \"") + llm_prompt + "\"");
-        std::string llm_response = llm_->generate(llm_prompt, "", 
-                                                  config_.llm.timeout_ms,
-                                                  config_.llm.max_tokens);
+        
+        // Conversation history for multi-turn with tools
+        // Start with user message
+        std::vector<std::string> conversation_history;
+        json user_msg;
+        user_msg["role"] = "user";
+        user_msg["content"] = llm_prompt;
+        conversation_history.push_back(user_msg.dump());
+        
+        // Main LLM loop with tool execution (only if tools are enabled)
+        std::string llm_response;
+        
+        if (tool_definitions.empty()) {
+            // No tools enabled - use simple direct LLM call
+            LLMResponse response = llm_->generate_with_tools(
+                llm_prompt,
+                "",  // No tool definitions
+                {},   // No conversation history
+                config_.llm.timeout_ms,
+                config_.llm.max_tokens
+            );
+            llm_response = response.content;
+        } else {
+            // Tools enabled - use tool execution loop
+            std::vector<std::string> conversation_history;
+            json user_msg;
+            user_msg["role"] = "user";
+            user_msg["content"] = llm_prompt;
+            conversation_history.push_back(user_msg.dump());
+            
+            int max_iterations = 5;  // Prevent infinite loops
+            int iteration = 0;
+            
+            while (iteration < max_iterations) {
+                iteration++;
+                
+                LLMResponse response = llm_->generate_with_tools(
+                    "",  // Don't send prompt again - it's in conversation_history
+                    tool_definitions,
+                    conversation_history,
+                    config_.llm.timeout_ms,
+                    config_.llm.max_tokens
+                );
+                
+                // Add assistant message to conversation
+                json assistant_msg;
+                assistant_msg["role"] = "assistant";
+                if (response.has_content()) {
+                    assistant_msg["content"] = response.content;
+                }
+                if (response.has_tool_calls()) {
+                    assistant_msg["tool_calls"] = json::array();
+                    for (const auto& tc : response.tool_calls) {
+                        json tool_call;
+                        tool_call["id"] = tc.id;
+                        tool_call["type"] = "function";
+                        tool_call["function"]["name"] = tc.name;
+                        tool_call["function"]["arguments"] = tc.arguments;
+                        assistant_msg["tool_calls"].push_back(tool_call);
+                    }
+                }
+                conversation_history.push_back(assistant_msg.dump());
+                
+                // If no tool calls, we're done (LLM responded directly)
+                if (!response.has_tool_calls()) {
+                    if (response.has_content()) {
+                        llm_response = response.content;
+                    } else {
+                        // Empty response, use fallback
+                        llm_response = "Stand by.";
+                    }
+                    break;
+                }
+                
+                // Execute tools
+                LOG_LLM("Tool calls detected: " + std::to_string(response.tool_calls.size()));
+                std::vector<ToolExecutionResult> tool_results;
+                
+                for (const auto& tool_call : response.tool_calls) {
+                    ToolExecutionRequest call;
+                    call.tool_name = tool_call.name;
+                    call.tool_call_id = tool_call.id;
+                    call.params_json = tool_call.arguments;
+                    
+                    LOG_LLM("Executing tool: " + call.tool_name);
+                    
+                    // Execute synchronously for now (can be made async later)
+                    auto result = tool_executor_->execute_sync(call, config_.tools.timeout_ms);
+                    tool_results.push_back(result);
+                    
+                    // Add tool result to conversation
+                    std::string result_msg = LLMClient::format_tool_result(
+                        result.tool_call_id,
+                        result.result.success ? result.result.content : ("Error: " + result.result.error)
+                    );
+                    conversation_history.push_back(result_msg);
+                }
+                
+                // Continue loop to get LLM response with tool results
+            }
+            
+            // If we hit max iterations, use last response or fallback
+            if (iteration >= max_iterations && llm_response.empty()) {
+                LOG_LLM("Max tool execution iterations reached");
+                llm_response = "Stand by.";
+            }
+        }
         
         auto llm_end = std::chrono::steady_clock::now();
         int64_t llm_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -406,15 +574,26 @@ private:
     // Track previous state for transition detection
     State previous_state_;
     
+    // Track speech frame count for logging
+    int speech_frame_count_;
+    
+    // Track speech timing for periodic logging
+    std::chrono::steady_clock::time_point speech_start_time_;
+    std::chrono::steady_clock::time_point last_speech_log_time_;
+    
     std::unique_ptr<AudioIO> audio_io_;
     std::unique_ptr<VADEndpointing> vad_;
     std::unique_ptr<STTEngine> stt_;
     std::unique_ptr<Router> router_;
     std::unique_ptr<LLMClient> llm_;
     std::unique_ptr<TTSEngine> tts_;
-    std::unique_ptr<TXController> tx_;
-    std::unique_ptr<StateMachine> state_machine_;
-    std::unique_ptr<SessionRecorder> recorder_;
+        std::unique_ptr<TXController> tx_;
+        std::unique_ptr<StateMachine> state_machine_;
+        std::unique_ptr<SessionRecorder> recorder_;
+        
+        // Tool system
+        std::unique_ptr<ToolRegistry> tool_registry_;
+        std::unique_ptr<ToolExecutor> tool_executor_;
 };
 
 VoiceAgent::VoiceAgent(const Config& config)

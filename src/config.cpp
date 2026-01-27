@@ -83,6 +83,21 @@ Config Config::load_from_file(const std::string& path) {
         if (tx.contains("enable_end_chirp")) cfg.tx.enable_end_chirp = tx["enable_end_chirp"];
     }
     
+    // Tools config
+    if (j.contains("tools")) {
+        auto& tools = j["tools"];
+        if (tools.contains("timeout_ms")) cfg.tools.timeout_ms = tools["timeout_ms"];
+        if (tools.contains("max_concurrent")) cfg.tools.max_concurrent = tools["max_concurrent"];
+        if (tools.contains("enabled") && tools["enabled"].is_array()) {
+            cfg.tools.enabled.clear();
+            for (const auto& tool_name : tools["enabled"]) {
+                if (tool_name.is_string()) {
+                    cfg.tools.enabled.push_back(tool_name.get<std::string>());
+                }
+            }
+        }
+    }
+    
     // Session/replay
     if (j.contains("session_log_dir")) cfg.session_log_dir = j["session_log_dir"];
     if (j.contains("enable_replay_mode")) cfg.enable_replay_mode = j["enable_replay_mode"];
@@ -121,6 +136,10 @@ void Config::save_to_file(const std::string& path) const {
     j["tx"]["max_transmit_ms"] = tx.max_transmit_ms;
     j["tx"]["enable_start_chirp"] = tx.enable_start_chirp;
     j["tx"]["enable_end_chirp"] = tx.enable_end_chirp;
+    
+    j["tools"]["enabled"] = tools.enabled;
+    j["tools"]["timeout_ms"] = tools.timeout_ms;
+    j["tools"]["max_concurrent"] = tools.max_concurrent;
     
     j["session_log_dir"] = session_log_dir;
     j["enable_replay_mode"] = enable_replay_mode;

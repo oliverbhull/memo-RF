@@ -185,6 +185,12 @@ set(SOURCES
     src/session_recorder.cpp
     src/config.cpp
     src/logger.cpp
+    src/tool.cpp
+    src/tool_registry.cpp
+    src/tool_executor.cpp
+    src/tools/log_memo_tool.cpp
+    src/tools/external_research_tool.cpp
+    src/tools/internal_search_tool.cpp
 )
 
 # Header files
@@ -204,6 +210,12 @@ set(HEADERS
     include/logger.h
     include/utils.h
     include/errors.h
+    include/tool.h
+    include/tool_registry.h
+    include/tool_executor.h
+    include/tools/log_memo_tool.h
+    include/tools/external_research_tool.h
+    include/tools/internal_search_tool.h
 )
 
 # Executable

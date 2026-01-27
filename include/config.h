@@ -46,6 +46,12 @@ struct TXConfig {
     bool enable_end_chirp = false;
 };
 
+struct ToolsConfig {
+    std::vector<std::string> enabled;  // List of enabled tool names
+    int timeout_ms = 5000;              // Default timeout for tool execution
+    size_t max_concurrent = 1;          // Maximum concurrent tool executions
+};
+
 struct Config {
     AudioConfig audio;
     VADConfig vad;
@@ -53,6 +59,7 @@ struct Config {
     LLMConfig llm;
     TTSConfig tts;
     TXConfig tx;
+    ToolsConfig tools;
     
     std::string session_log_dir = "sessions";
     bool enable_replay_mode = false;
