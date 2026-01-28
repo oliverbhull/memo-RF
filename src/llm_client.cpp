@@ -194,8 +194,7 @@ private:
         // Add system message first (always, it should be first)
         json system_msg;
         system_msg["role"] = "system";
-        system_msg["content"] = "You are a radio operator. Give brief, direct answers. "
-                                "Keep responses concise (1-2 sentences, under 20 words).";
+        system_msg["content"] = "You are a helpful radio operator assistant. Answer the user's questions clearly and concisely. Keep responses brief and direct (1-2 sentences, under 20 words when possible).";
         messages.push_back(system_msg);
         
         // Add conversation history (which should start with user message, then assistant/tool messages)
@@ -389,8 +388,7 @@ private:
         
         // Simpler, less restrictive prompt for GPT-OSS
         // GPT-OSS works better with less aggressive constraints
-        oss << "You are a radio operator. Give brief, direct answers. ";
-        oss << "Keep responses concise (1-2 sentences, under 20 words). ";
+        oss << "You are a helpful radio operator assistant. Answer the user's questions clearly and concisely. Keep responses brief and direct (1-2 sentences, under 20 words when possible). ";
         if (!context.empty()) {
             oss << "Context: " << context << " ";
         }

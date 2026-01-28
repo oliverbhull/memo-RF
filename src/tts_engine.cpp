@@ -188,17 +188,93 @@ private:
             return AudioBuffer();
         }
         
-        // Skip WAV header (44 bytes for standard PCM)
-        file.seekg(44);
-        
-        // Read PCM16 samples
-        AudioBuffer audio;
-        Sample sample;
-        while (file.read(reinterpret_cast<char*>(&sample), sizeof(Sample))) {
-            audio.push_back(sample);
+        // Read WAV header to get sample rate
+        char header[44];
+        file.read(header, 44);
+        if (file.gcount() < 44) {
+            LOG_TTS("WAV file too short or invalid header");
+            return AudioBuffer();
         }
         
-        return audio;
+        // Extract sample rate from WAV header (offset 24-27, little-endian)
+        int wav_sample_rate = static_cast<unsigned char>(header[24]) |
+                              (static_cast<unsigned char>(header[25]) << 8) |
+                              (static_cast<unsigned char>(header[26]) << 16) |
+                              (static_cast<unsigned char>(header[27]) << 24);
+        
+        // Extract number of channels (offset 22-23, little-endian)
+        int channels = static_cast<unsigned char>(header[22]) |
+                       (static_cast<unsigned char>(header[23]) << 8);
+        
+        // Extract data size (offset 40-43, little-endian)
+        int data_size = static_cast<unsigned char>(header[40]) |
+                        (static_cast<unsigned char>(header[41]) << 8) |
+                        (static_cast<unsigned char>(header[42]) << 16) |
+                        (static_cast<unsigned char>(header[43]) << 24);
+        
+        std::ostringstream info_oss;
+        info_oss << "WAV file: sample_rate=" << wav_sample_rate 
+                 << "Hz, channels=" << channels << ", data_size=" << data_size;
+        LOG_TTS(info_oss.str());
+        
+        // Read PCM16 samples
+        AudioBuffer raw_audio;
+        Sample sample;
+        int samples_to_read = data_size / sizeof(Sample);
+        raw_audio.reserve(samples_to_read);
+        
+        while (file.read(reinterpret_cast<char*>(&sample), sizeof(Sample))) {
+            raw_audio.push_back(sample);
+        }
+        
+        // If stereo, convert to mono (take left channel only)
+        AudioBuffer mono_audio;
+        if (channels == 2) {
+            mono_audio.reserve(raw_audio.size() / 2);
+            for (size_t i = 0; i < raw_audio.size(); i += 2) {
+                mono_audio.push_back(raw_audio[i]);
+            }
+        } else {
+            mono_audio = raw_audio;
+        }
+        
+        // Resample to 16kHz if needed
+        if (wav_sample_rate == DEFAULT_SAMPLE_RATE) {
+            return mono_audio;
+        }
+        
+        // Resample using linear interpolation
+        // Calculate how many output samples we need
+        float ratio = static_cast<float>(wav_sample_rate) / static_cast<float>(DEFAULT_SAMPLE_RATE);
+        size_t output_samples = static_cast<size_t>(mono_audio.size() / ratio);
+        AudioBuffer resampled;
+        resampled.reserve(output_samples);
+        
+        // Generate output samples at target rate
+        for (size_t out_idx = 0; out_idx < output_samples; out_idx++) {
+            // Calculate position in input buffer
+            float input_pos = static_cast<float>(out_idx) * ratio;
+            size_t idx0 = static_cast<size_t>(input_pos);
+            size_t idx1 = std::min(idx0 + 1, mono_audio.size() - 1);
+            
+            if (idx0 >= mono_audio.size()) break;
+            
+            // Linear interpolation
+            float t = input_pos - idx0;
+            float sample0 = static_cast<float>(mono_audio[idx0]);
+            float sample1 = static_cast<float>(mono_audio[idx1]);
+            float interpolated = sample0 * (1.0f - t) + sample1 * t;
+            
+            resampled.push_back(static_cast<Sample>(interpolated));
+        }
+        
+        std::ostringstream resample_oss;
+        resample_oss << "Resampled from " << wav_sample_rate << "Hz to " 
+                     << DEFAULT_SAMPLE_RATE << "Hz: " << mono_audio.size() 
+                     << " -> " << resampled.size() << " samples";
+        LOG_TTS(resample_oss.str());
+        
+        return resampled;
     }
     
     AudioBuffer generate_preroll() {
