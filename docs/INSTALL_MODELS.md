@@ -34,7 +34,7 @@ huggingface-cli download Qwen/Qwen2-1.5B-Instruct-GGUF \
 ### Starting llama.cpp Server with QWEN
 
 ```bash
-cd /Users/oliverhull/dev/whisper.cpp/build/bin
+cd /path/to/whisper.cpp/build/bin
 ./whisper-server \
     -m ~/models/llm/qwen2-1_5b-instruct-q5_k_m.gguf \
     -c 2048 \
@@ -116,7 +116,7 @@ After installation, update your config:
     "model_name": "qwen"
   },
   "tts": {
-    "voice_path": "/Users/oliverhull/models/piper/en_US-lessac-medium.onnx",
+    "voice_path": "~/models/piper/en_US-lessac-medium.onnx",
     "vox_preroll_ms": 200,
     "output_gain": 1.0
   }
@@ -132,7 +132,7 @@ Create a startup script:
 # start-memo-rf.sh
 
 # Start llama.cpp server in background
-cd /Users/oliverhull/dev/whisper.cpp/build/bin
+cd /path/to/whisper.cpp/build/bin
 ./whisper-server -m ~/models/llm/qwen2-1_5b-instruct-q5_k_m.gguf -c 2048 --port 8080 &
 SERVER_PID=$!
 
@@ -140,7 +140,7 @@ SERVER_PID=$!
 sleep 3
 
 # Start memo-rf
-cd /Users/oliverhull/dev/memo-RF/build
+cd /path/to/memo-RF/build
 ./memo-rf ../config/config.json
 
 # Cleanup

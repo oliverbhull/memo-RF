@@ -187,6 +187,7 @@ Additional documentation is available in the `docs/` folder:
 - `VOICE_CONFIG.md` - Voice configuration options
 - `QUICKSTART.md` - Quick start guide
 - `NEXT_STEPS.md` - Future development plans
+- `RUNNING.md` - Running with agentic tools (Ollama, tools.enabled, troubleshooting)
 
 ## License
 

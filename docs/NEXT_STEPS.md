@@ -9,7 +9,7 @@ The build succeeded! Your executable is at: `build/memo-rf`
 First, list available audio devices:
 
 ```bash
-cd /Users/oliverhull/dev/memo-RF/build
+cd build
 ./memo-rf --list-devices
 ```
 
@@ -22,7 +22,7 @@ Edit `config/config.json`:
 ```json
 {
   "stt": {
-    "model_path": "/Users/oliverhull/models/whisper/ggml-small.en-q5_1.bin"
+    "model_path": "~/models/whisper/ggml-small.en-q5_1.bin"
   },
   "tts": {
     "voice_path": "path/to/piper/voice.onnx"
@@ -63,7 +63,7 @@ Download a voice model and update `config/config.json`:
 ## 5. Test Run
 
 ```bash
-cd /Users/oliverhull/dev/memo-RF/build
+cd build
 ./memo-rf ../config/config.json
 ```
 

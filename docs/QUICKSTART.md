@@ -9,7 +9,7 @@
 
 2. **Build whisper.cpp** (if not already built):
    ```bash
-   cd /Users/oliverhull/dev/whisper.cpp
+   cd /path/to/whisper.cpp
    make
    ```
    This should create `libwhisper.a` (or `libwhisper.dylib` on macOS) in the whisper.cpp directory.

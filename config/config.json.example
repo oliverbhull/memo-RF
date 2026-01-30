@@ -1,37 +1,65 @@
 {
   "audio": {
-    "input_device": "default",
-    "output_device": "default",
+    "input_device": "0",
+    "output_device": "1",
     "sample_rate": 16000
   },
   "vad": {
     "threshold": 0.05,
-    "end_of_utterance_silence_ms": 1000,
     "min_speech_ms": 200,
-    "hangover_ms": 200,
-    "pause_tolerance_ms": 500
+    "end_of_utterance_silence_ms": 350,
+    "hangover_ms": 50,
+    "pause_tolerance_ms": 150,
+    "pre_speech_buffer_ms": 300,
+    "adaptive_threshold": true,
+    "debug_log_rms_each_frame": false
   },
   "stt": {
-    "model_path": "/path/to/your/whisper/model.bin",
+    "model_path": "/path/to/whisper/ggml-small.en-q5_1.bin",
     "language": "en"
   },
   "llm": {
-    "endpoint": "http://localhost:8080/completion",
-    "timeout_ms": 5000,
-    "max_tokens": 30,
-    "model_name": "qwen",
+    "endpoint": "http://localhost:11434/api/chat",
+    "model_name": "qwen2.5:7b",
+    "timeout_ms": 30000,
+    "max_tokens": 100,
     "temperature": 0.3,
-    "stop_sequences": ["</s>", "\n\n", "User:", "Human:", "Assistant:", "[end", "Remember,"]
+    "system_prompt": "You are a helpful radio operator supporting field operators. Use clear, concise comms. Be succinct: one short sentence, under 15 words when possible. No preamble. Answer in standard radio procedure.",
+    "stop_sequences": ["</s>", "\n\n", "User:", "Human:", "<|return|>", "<|end|>"]
   },
   "tts": {
-    "voice_path": "/path/to/your/piper/voice.onnx",
-    "vox_preroll_ms": 200,
-    "output_gain": 1.0
+    "voice_path": "/path/to/piper/en_US-lessac-high.onnx",
+    "espeak_data_path": "/opt/homebrew/share/espeak-ng-data",
+    "piper_path": "",
+    "vox_preroll_ms": 350,
+    "vox_preroll_amplitude": 0.55,
+    "output_gain": 1.0,
+    "preload_phrases": [
+      "roger.",
+      "affirmative.",
+      "negative.",
+      "stand by.",
+      "copy.",
+      "over."
+    ]
   },
   "tx": {
     "max_transmit_ms": 20000,
+    "standby_delay_ms": 200,
     "enable_start_chirp": false,
     "enable_end_chirp": false
+  },
+  "tools": {
+    "enabled": [],
+    "timeout_ms": 5000,
+    "max_concurrent": 1
+  },
+  "memory": {
+    "max_messages": 20,
+    "max_tokens": 2000,
+    "system_prompt": "You are a helpful radio operator supporting field operators. Use clear, concise comms. Be succinct: one short sentence, under 15 words when possible. No preamble. Answer in standard radio procedure.",
+    "persistence_path": "",
+    "auto_save": false
   },
   "session_log_dir": "sessions",
   "enable_replay_mode": false,

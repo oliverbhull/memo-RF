@@ -7,7 +7,7 @@ The agent's voice is controlled by the Piper TTS model specified in `config.json
 ```json
 {
   "tts": {
-    "voice_path": "/Users/oliverhull/models/piper/en_US-lessac-medium.onnx",
+    "voice_path": "~/models/piper/en_US-lessac-medium.onnx",
     "vox_preroll_ms": 200,
     "output_gain": 1.0
   }
@@ -18,7 +18,7 @@ The agent's voice is controlled by the Piper TTS model specified in `config.json
 
 Piper supports many voices in different languages and quality levels. Browse available voices at:
 - **HuggingFace**: https://huggingface.co/rhasspy/piper-voices/tree/main
-- **Local VOICES.md**: Check `~/dev/piper/VOICES.md` if you have the piper repo
+- **Local VOICES.md**: Check `piper/VOICES.md` in your Piper clone if you have the repo
 
 ### Popular English (en_US) Voices
 
@@ -49,7 +49,7 @@ After downloading, update the `voice_path` in `config.json`:
 ```json
 {
   "tts": {
-    "voice_path": "/Users/oliverhull/models/piper/en_US-amy-medium.onnx",
+    "voice_path": "~/models/piper/en_US-amy-medium.onnx",
     "vox_preroll_ms": 200,
     "output_gain": 1.0
   }

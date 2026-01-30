@@ -331,7 +331,7 @@ The `ConversationMemory` class provides bounded context management:
 }
 ```
 
-See `config/config.example.json` for a complete example.
+See `config/config.json.example` for a complete example.
 
 ---
 

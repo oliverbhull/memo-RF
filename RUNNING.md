@@ -20,7 +20,7 @@
 ### 1. Build the project
 
 ```bash
-cd /Users/oliverhull/dev/memo-RF
+cd /path/to/memo-RF
 ./build.sh
 ```
 
