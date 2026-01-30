@@ -23,6 +23,7 @@
     "model_name": "qwen2.5:7b",
     "timeout_ms": 30000,
     "max_tokens": 100,
+    "context_max_turns_to_send": 6,
     "temperature": 0.3,
     "system_prompt": "You are a helpful radio operator supporting field operators. Use clear, concise comms. Be succinct: one short sentence, under 15 words when possible. No preamble. Answer in standard radio procedure.",
     "stop_sequences": ["</s>", "\n\n", "User:", "Human:", "<|return|>", "<|end|>"]

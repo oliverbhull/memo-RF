@@ -30,6 +30,7 @@ struct LLMConfig {
     std::string endpoint = "http://localhost:8080/completion";
     int timeout_ms = 2000;
     int max_tokens = 100;
+    int context_max_turns_to_send = 6;  ///< Only send last N turns to LLM (bounded context)
     std::string model_name = "qwen";
     float temperature = 0.7f;
     std::vector<std::string> stop_sequences = {"</s>", "\n\n", "User:", "Human:"};

@@ -126,6 +126,9 @@ public:
     /// Export to JSON array of message strings (for existing LLM client)
     std::vector<std::string> to_json_strings() const;
 
+    /// Export only the last n messages (system + recent) as JSON strings (for bounded context)
+    std::vector<std::string> to_json_strings_recent(size_t n) const;
+
     // =========================================================================
     // Persistence
     // =========================================================================

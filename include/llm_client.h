@@ -74,6 +74,29 @@ public:
      */
     static std::string format_tool_result(const std::string& tool_call_id, 
                                          const std::string& result_content);
+
+    /**
+     * @brief Resolve user message using conversation context (follow-ups, STT errors).
+     * When conversation_history has prior turns, uses context to produce a single clarified
+     * user message. Call this before the main LLM when session has history.
+     * @param raw_user_message Latest STT output (may contain recognition errors)
+     * @param conversation_history Session history (e.g. from ConversationMemory::to_json_strings())
+     * @param timeout_ms Timeout in ms (0 = use config default)
+     * @return Clarified user message, or raw_user_message if clarification fails or no history
+     */
+    std::string clarify_user_message(
+        const std::string& raw_user_message,
+        const std::vector<std::string>& conversation_history,
+        int timeout_ms = 0);
+
+    /**
+     * @brief Summarize conversation (for background context compression).
+     * Uses a fixed system prompt and low max_tokens. Thread-safe when using a
+     * dedicated LLMClient instance per thread.
+     */
+    std::string summarize_conversation(
+        const std::string& conversation_text,
+        int timeout_ms = 0);
     
     // Check if client is ready
     bool is_ready() const;

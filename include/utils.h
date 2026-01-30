@@ -66,6 +66,7 @@ inline bool is_empty_or_whitespace(const std::string& str) {
 
 /**
  * @brief Ensure transmission text ends with " over." (radio protocol)
+ * Replaces trailing "over and out" with "over." so we never say both or double "over."
  * @param str Text that will be spoken over the air
  * @return Copy of str, with " over." appended if it does not already end with "over" or "over."
  */
@@ -74,8 +75,22 @@ inline std::string ensure_ends_with_over(const std::string& str) {
     if (t.empty()) return " over.";
     std::string n = normalize_copy(t);
     size_t len = n.size();
-    if (len >= 5 && n.compare(len - 5, 5, "over.") == 0) return str;
-    if (len >= 4 && n.compare(len - 4, 4, "over") == 0) return str;
+    // Replace "over and out" / "over and out." (and "... over." suffix) with "over." so we never double up.
+    if (len >= 18 && n.compare(len - 18, 18, "over and out. over.") == 0) {
+        t = t.substr(0, t.size() - 18) + " over.";
+        n = normalize_copy(t);
+        len = n.size();
+    } else if (len >= 13 && n.compare(len - 13, 13, "over and out.") == 0) {
+        t = t.substr(0, t.size() - 13) + " over.";
+        n = normalize_copy(t);
+        len = n.size();
+    } else if (len >= 12 && n.compare(len - 12, 12, "over and out") == 0) {
+        t = t.substr(0, t.size() - 12) + " over.";
+        n = normalize_copy(t);
+        len = n.size();
+    }
+    if (len >= 5 && n.compare(len - 5, 5, "over.") == 0) return t;
+    if (len >= 4 && n.compare(len - 4, 4, "over") == 0) return t;
     return t + " over.";
 }
 

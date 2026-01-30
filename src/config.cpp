@@ -58,6 +58,7 @@ Config Config::load_from_file(const std::string& path) {
         if (l.contains("endpoint")) cfg.llm.endpoint = l["endpoint"];
         if (l.contains("timeout_ms")) cfg.llm.timeout_ms = l["timeout_ms"];
         if (l.contains("max_tokens")) cfg.llm.max_tokens = l["max_tokens"];
+        if (l.contains("context_max_turns_to_send")) cfg.llm.context_max_turns_to_send = l["context_max_turns_to_send"];
         if (l.contains("model_name")) cfg.llm.model_name = l["model_name"];
         if (l.contains("temperature")) cfg.llm.temperature = l["temperature"];
         if (l.contains("system_prompt")) cfg.llm.system_prompt = l["system_prompt"];
@@ -130,6 +131,7 @@ void Config::save_to_file(const std::string& path) const {
     j["llm"]["endpoint"] = llm.endpoint;
     j["llm"]["timeout_ms"] = llm.timeout_ms;
     j["llm"]["max_tokens"] = llm.max_tokens;
+    j["llm"]["context_max_turns_to_send"] = llm.context_max_turns_to_send;
     j["llm"]["model_name"] = llm.model_name;
     j["llm"]["temperature"] = llm.temperature;
     j["llm"]["system_prompt"] = llm.system_prompt;

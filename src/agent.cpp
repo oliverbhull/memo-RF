@@ -13,6 +13,9 @@
 #include "common.h"
 #include "tool_registry.h"
 #include "tool_executor.h"
+#define MEMO_RF_USE_COMMON_TYPES 1  // Avoid redefinition of Transcript/ms_since from core/types.h
+#include "memory/conversation_memory.h"
+#include "core/constants.h"
 #include "tools/log_memo_tool.h"
 #include "tools/external_research_tool.h"
 #include "tools/internal_search_tool.h"
@@ -22,6 +25,8 @@
 #include <cmath>
 #include <sstream>
 #include <vector>
+#include <mutex>
+#include <condition_variable>
 #include <nlohmann/json.hpp>
 
 using json = nlohmann::json;
@@ -107,6 +112,20 @@ public:
             }
         }
         Logger::info("Tool system initialized with " + std::to_string(tool_registry_->size()) + " tools");
+
+        // Session conversation memory for multi-turn context
+        memory::ConversationConfig mem_config;
+        mem_config.system_prompt = config_.llm.system_prompt;
+        mem_config.max_messages = constants::memory::MAX_HISTORY_MESSAGES;
+        mem_config.max_tokens = constants::memory::MAX_HISTORY_TOKENS;
+        session_memory_ = std::make_unique<memory::ConversationMemory>(mem_config);
+        Logger::info("Session memory enabled (max " + std::to_string(mem_config.max_messages) + " messages)");
+
+        // Dedicated LLM client for background summarization (same config, separate instance for thread safety)
+        summarizer_llm_ = std::make_unique<LLMClient>(config_.llm);
+        worker_shutdown_ = false;
+        worker_thread_ = std::thread(&Impl::summarizer_worker_loop, this);
+        Logger::info("Background context summarizer started");
         
         initialized_ = true;
         return true;
@@ -194,6 +213,15 @@ public:
     
     void shutdown() {
         running_ = false;
+        // Signal summarizer worker to exit and join (so destructor/cleanup don't leave thread running)
+        {
+            std::lock_guard<std::mutex> lock(job_mutex_);
+            worker_shutdown_ = true;
+        }
+        job_cv_.notify_one();
+        if (worker_thread_.joinable()) {
+            worker_thread_.join();
+        }
     }
 
 private:
@@ -417,8 +445,34 @@ private:
         
         // Generate LLM response with tool support
         auto llm_start = std::chrono::steady_clock::now();
-        std::string llm_prompt = transcript.text;
-        recorder_->record_llm_prompt(llm_prompt, utterance_id);
+        std::string raw_prompt = transcript.text;
+        recorder_->record_llm_prompt(raw_prompt, utterance_id);
+        
+        // Bounded context: only send last N turns to avoid "lost in the middle" (Mistral)
+        size_t max_turns = static_cast<size_t>(std::max(1, config_.llm.context_max_turns_to_send));
+        std::vector<std::string> session_history = session_memory_->to_json_strings_recent(max_turns);
+        // Prepend conversation summary from background summarizer (primacy for Mistral)
+        {
+            std::lock_guard<std::mutex> lock(summary_mutex_);
+            if (!context_summary_.empty()) {
+                json sum_msg;
+                sum_msg["role"] = "user";
+                sum_msg["content"] = "Conversation summary: " + context_summary_;
+                session_history.insert(session_history.begin() + 1, sum_msg.dump());
+            }
+        }
+        
+        // Contextual clarification: when we have prior turns, resolve references and STT errors
+        // so the main LLM sees what the user likely meant (e.g. "that fan" -> "that frequency").
+        std::string llm_prompt = raw_prompt;
+        if (session_memory_->message_count() >= 2) {
+            std::string clarified = llm_->clarify_user_message(raw_prompt, session_history,
+                                                              config_.llm.timeout_ms);
+            if (!clarified.empty() && clarified != raw_prompt) {
+                LOG_LLM(std::string("Context clarified: \"") + raw_prompt + "\" -> \"" + clarified + "\"");
+                llm_prompt = clarified;
+            }
+        }
         
         // Get tool definitions for LLM (only if tools are enabled)
         std::string tool_definitions;
@@ -428,30 +482,24 @@ private:
         
         LOG_LLM(std::string("Calling LLM with prompt: \"") + llm_prompt + "\"");
         
-        // Conversation history for multi-turn with tools
-        // Start with user message
-        std::vector<std::string> conversation_history;
-        json user_msg;
-        user_msg["role"] = "user";
-        user_msg["content"] = llm_prompt;
-        conversation_history.push_back(user_msg.dump());
-        
         // Main LLM loop with tool execution (only if tools are enabled)
         std::string llm_response;
         
         if (tool_definitions.empty()) {
-            // No tools enabled - use simple direct LLM call
+            // No tools enabled - use simple direct LLM call with session history
             LLMResponse response = llm_->generate_with_tools(
                 llm_prompt,
                 "",  // No tool definitions
-                {},   // No conversation history
+                session_history,
                 config_.llm.timeout_ms,
                 config_.llm.max_tokens
             );
             llm_response = response.content;
+            session_memory_->add_user_message(llm_prompt);
+            session_memory_->add_assistant_message(llm_response);
         } else {
-            // Tools enabled - use tool execution loop
-            std::vector<std::string> conversation_history;
+            // Tools enabled - use tool execution loop with session history + current turn
+            std::vector<std::string> conversation_history = session_history;
             json user_msg;
             user_msg["role"] = "user";
             user_msg["content"] = llm_prompt;
@@ -533,6 +581,8 @@ private:
                 LOG_LLM("Max tool execution iterations reached");
                 llm_response = "Stand by.";
             }
+            session_memory_->add_user_message(llm_prompt);
+            session_memory_->add_assistant_message(llm_response);
         }
         
         auto llm_end = std::chrono::steady_clock::now();
@@ -564,6 +614,16 @@ private:
         
         LOG_TX("Transmitting response (" + std::to_string(response_audio.size()) + " samples)...");
         tx_->transmit(response_audio);
+
+        // Kick off background summarization (non-blocking) when we have enough history
+        if (session_memory_->message_count() >= 4) {
+            std::vector<std::string> snapshot = session_memory_->to_json_strings();
+            {
+                std::lock_guard<std::mutex> lock(job_mutex_);
+                pending_snapshot_ = std::move(snapshot);
+            }
+            job_cv_.notify_one();
+        }
     }
     
     void execute_fallback(const Plan& plan, AudioBuffer& response_audio, int utterance_id) {
@@ -581,6 +641,7 @@ private:
     }
     
     void cleanup() {
+        // Worker thread is joined in shutdown() (called from destructor or by user)
         if (tx_) {
             tx_->stop();
         }
@@ -591,6 +652,44 @@ private:
             recorder_->finalize_session();
             Logger::info("Session saved: " + recorder_->get_session_id());
         }
+    }
+
+    void summarizer_worker_loop() {
+        while (true) {
+            std::vector<std::string> job;
+            {
+                std::unique_lock<std::mutex> lock(job_mutex_);
+                job_cv_.wait(lock, [this] {
+                    return worker_shutdown_ || !pending_snapshot_.empty();
+                });
+                if (worker_shutdown_) break;
+                job = std::move(pending_snapshot_);
+                pending_snapshot_.clear();
+            }
+            std::string formatted = format_snapshot_for_summary(job);
+            if (formatted.empty()) continue;
+            std::string s = summarizer_llm_->summarize_conversation(formatted, config_.llm.timeout_ms);
+            if (!s.empty()) {
+                std::lock_guard<std::mutex> lock(summary_mutex_);
+                context_summary_ = s;
+                LOG_LLM("Context summary updated");
+            }
+        }
+    }
+
+    static std::string format_snapshot_for_summary(const std::vector<std::string>& snapshot) {
+        std::ostringstream out;
+        for (const auto& msg_str : snapshot) {
+            try {
+                json msg = json::parse(msg_str);
+                std::string role = msg.value("role", "");
+                if (role == "system") continue;  // Skip system prompt so summarizer sees only dialogue
+                std::string content = msg.value("content", "");
+                if (content.empty()) continue;
+                out << role << ": " << content << "\n";
+            } catch (...) { continue; }
+        }
+        return out.str();
     }
     
     Config config_;
@@ -623,6 +722,19 @@ private:
         // Tool system
         std::unique_ptr<ToolRegistry> tool_registry_;
         std::unique_ptr<ToolExecutor> tool_executor_;
+
+        // Session conversation memory (past user/assistant turns)
+        std::unique_ptr<memory::ConversationMemory> session_memory_;
+
+        // Background context summarization (non-blocking)
+        std::mutex summary_mutex_;
+        std::string context_summary_;
+        std::unique_ptr<LLMClient> summarizer_llm_;
+        std::mutex job_mutex_;
+        std::condition_variable job_cv_;
+        std::vector<std::string> pending_snapshot_;
+        std::atomic<bool> worker_shutdown_{false};
+        std::thread worker_thread_;
 };
 
 VoiceAgent::VoiceAgent(const Config& config)

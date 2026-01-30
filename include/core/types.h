@@ -40,10 +40,12 @@ using TimePoint = Clock::time_point;
 using Duration = std::chrono::milliseconds;
 using Microseconds = std::chrono::microseconds;
 
-/// Get milliseconds elapsed since a time point
+/// Get milliseconds elapsed since a time point (omit if common.h already defines it)
+#ifndef MEMO_RF_USE_COMMON_TYPES
 inline int64_t ms_since(TimePoint start) {
     return std::chrono::duration_cast<Duration>(Clock::now() - start).count();
 }
+#endif
 
 /// Get current timestamp in milliseconds (for logging)
 inline int64_t now_ms() {
@@ -114,9 +116,10 @@ struct VoidResult {
 };
 
 // =============================================================================
-// Speech/Transcript Types
+// Speech/Transcript Types (omit Transcript if common.h already defines it)
 // =============================================================================
 
+#ifndef MEMO_RF_USE_COMMON_TYPES
 /// Result of speech-to-text transcription
 struct Transcript {
     std::string text;
@@ -126,6 +129,7 @@ struct Transcript {
 
     bool empty() const { return text.empty(); }
 };
+#endif
 
 /// Conversation message roles
 enum class MessageRole {

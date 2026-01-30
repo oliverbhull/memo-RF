@@ -29,20 +29,79 @@ public:
     LLMResponse generate_with_tools(const std::string& prompt,
                                    const std::string& tool_definitions_json,
                                    const std::vector<std::string>& conversation_history,
-                                   int timeout_ms, int max_tokens) {
+                                   int timeout_ms, int max_tokens,
+                                   const std::string& system_prompt_override = "") {
         if (timeout_ms == 0) timeout_ms = config_.timeout_ms;
         if (max_tokens == 0) max_tokens = config_.max_tokens;
         
         LLMResponse response;
         
         if (is_ollama_) {
-            return generate_ollama_chat(prompt, tool_definitions_json, conversation_history, 
-                                       timeout_ms, max_tokens);
+            return generate_ollama_chat(prompt, tool_definitions_json, conversation_history,
+                                       timeout_ms, max_tokens, system_prompt_override);
         } else {
             // Fallback to legacy format
             response.content = generate(prompt, "", timeout_ms, max_tokens);
             return response;
         }
+    }
+
+    std::string clarify_user_message(const std::string& raw_user_message,
+                                     const std::vector<std::string>& conversation_history,
+                                     int timeout_ms) {
+        if (timeout_ms == 0) timeout_ms = config_.timeout_ms;
+        // Need at least one prior exchange (user + assistant) to clarify
+        if (conversation_history.size() < 2) return raw_user_message;
+        if (!is_ollama_) return raw_user_message;
+
+        // Build history for clarifier: dialogue only (skip system) + "Latest user message: <raw>"
+        std::vector<std::string> clarifier_history;
+        for (const auto& msg_str : conversation_history) {
+            try {
+                json msg = json::parse(msg_str);
+                if (msg.contains("role") && msg["role"] == "system") continue;
+                clarifier_history.push_back(msg_str);
+            } catch (...) { continue; }
+        }
+        json latest;
+        latest["role"] = "user";
+        latest["content"] = "Latest user message (may contain speech recognition errors): " + raw_user_message;
+        clarifier_history.push_back(latest.dump());
+
+        static const char* CLARIFIER_SYSTEM =
+            "You are a context resolver. Given the conversation so far and the latest user message "
+            "below (which may contain speech recognition errors), output only the single clarified "
+            "user message that the user most likely intended. Resolve pronouns and references "
+            "(e.g. 'that' -> the topic just discussed). One line. No explanation, no preamble, no quotation marks.";
+
+        LLMResponse r = generate_ollama_chat("", "", clarifier_history, timeout_ms, 80, CLARIFIER_SYSTEM);
+        std::string clarified = r.content;
+        // Trim whitespace
+        while (!clarified.empty() && (clarified.back() == ' ' || clarified.back() == '\n' || clarified.back() == '\r'))
+            clarified.pop_back();
+        size_t start = 0;
+        while (start < clarified.size() && (clarified[start] == ' ' || clarified[start] == '\n' || clarified[start] == '\r'))
+            start++;
+        if (start > 0) clarified = clarified.substr(start);
+        return clarified.empty() ? raw_user_message : clarified;
+    }
+
+    std::string summarize_conversation(const std::string& conversation_text, int timeout_ms) {
+        if (timeout_ms == 0) timeout_ms = config_.timeout_ms;
+        if (!is_ollama_) return "";
+        static const char* SUMMARIZER_SYSTEM =
+            "From this dialogue, identify what is important and how things relate. "
+            "Retain only information that matters for ongoing context: capture relationships "
+            "(e.g. what refers to what, what is what) so later turns can refer back. "
+            "Output a brief factual summary only—plain prose, no radio procedure wording, no acknowledgments, no preamble.";
+        std::vector<std::string> empty_history;
+        LLMResponse r = generate_ollama_chat(conversation_text, "", empty_history, timeout_ms, 60, SUMMARIZER_SYSTEM);
+        std::string s = r.content;
+        while (!s.empty() && (s.back() == ' ' || s.back() == '\n' || s.back() == '\r')) s.pop_back();
+        size_t start = 0;
+        while (start < s.size() && (s[start] == ' ' || s[start] == '\n' || s[start] == '\r')) start++;
+        if (start > 0) s = s.substr(start);
+        return s;
     }
     
     std::string generate(const std::string& prompt, const std::string& context,
@@ -190,16 +249,17 @@ private:
     LLMResponse generate_ollama_chat(const std::string& prompt,
                                     const std::string& tool_definitions_json,
                                     const std::vector<std::string>& conversation_history,
-                                    int timeout_ms, int max_tokens) {
+                                    int timeout_ms, int max_tokens,
+                                    const std::string& system_prompt_override = "") {
         LLMResponse response;
         
         // Build messages array
         json messages = json::array();
         
-        // Add system message first (always, it should be first)
+        // Add system message first (override for clarification, else config)
         json system_msg;
         system_msg["role"] = "system";
-        system_msg["content"] = config_.system_prompt;
+        system_msg["content"] = system_prompt_override.empty() ? config_.system_prompt : system_prompt_override;
         messages.push_back(system_msg);
         
         // Add conversation history (which should start with user message, then assistant/tool messages)
@@ -247,9 +307,10 @@ private:
         request["stream"] = false;
 
         // Ollama options (includes anti-repetition)
+        int num_predict = (max_tokens > 0) ? max_tokens : config_.max_tokens;
         json options;
         options["temperature"] = config_.temperature;
-        options["num_predict"] = config_.max_tokens;
+        options["num_predict"] = num_predict;
         options["repeat_penalty"] = 1.3;
         options["repeat_last_n"] = 64;
         options["top_p"] = 0.9;
@@ -537,7 +598,17 @@ LLMResponse LLMClient::generate_with_tools(const std::string& prompt,
                                           const std::vector<std::string>& conversation_history,
                                           int timeout_ms, int max_tokens) {
     return pimpl_->generate_with_tools(prompt, tool_definitions_json, conversation_history,
-                                      timeout_ms, max_tokens);
+                                      timeout_ms, max_tokens, "");
+}
+
+std::string LLMClient::clarify_user_message(const std::string& raw_user_message,
+                                            const std::vector<std::string>& conversation_history,
+                                            int timeout_ms) {
+    return pimpl_->clarify_user_message(raw_user_message, conversation_history, timeout_ms);
+}
+
+std::string LLMClient::summarize_conversation(const std::string& conversation_text, int timeout_ms) {
+    return pimpl_->summarize_conversation(conversation_text, timeout_ms);
 }
 
 std::string LLMClient::generate(const std::string& prompt, const std::string& context,

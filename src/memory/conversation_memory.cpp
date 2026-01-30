@@ -178,6 +178,16 @@ public:
         return result;
     }
 
+    std::vector<std::string> to_json_strings_recent(size_t n) const {
+        std::vector<std::string> result;
+        std::vector<ConversationMessage> recent = get_recent_messages(n);
+        result.reserve(recent.size());
+        for (const auto& msg : recent) {
+            result.push_back(message_to_json(msg).dump());
+        }
+        return result;
+    }
+
     VoidResult save(const std::string& path) const {
         std::string save_path = path.empty() ? config_.persistence_path : path;
         if (save_path.empty()) {
@@ -408,6 +418,10 @@ std::string ConversationMemory::to_json() const {
 
 std::vector<std::string> ConversationMemory::to_json_strings() const {
     return impl_->to_json_strings();
+}
+
+std::vector<std::string> ConversationMemory::to_json_strings_recent(size_t n) const {
+    return impl_->to_json_strings_recent(n);
 }
 
 VoidResult ConversationMemory::save(const std::string& path) const {
