@@ -75,6 +75,9 @@ public:
         
         Logger::info("Audio I/O started successfully");
         
+        // Preload "Standby, over" so first speech-end ack is instant (cache hit)
+        tts_->preload_phrase("Standby, over");
+        
         // Start session recording
         Logger::info("Starting session recording...");
         recorder_->start_session();
@@ -165,6 +168,9 @@ public:
                     state_machine_->on_playback_complete();
                     transmission_end_time_ = std::chrono::steady_clock::now();
                     vad_->reset(); // Clear any accumulated audio
+                    // Flush input queue so we do not process stale audio that accumulated
+                    // while the main loop was blocked in handle_speech_end (STT/LLM/TTS)
+                    audio_io_->flush_input_queue();
                     current_state = state_machine_->get_state(); // Update current_state after transition
                 }
             }
@@ -303,6 +309,25 @@ private:
         
         utterance_id++;
         
+        // Immediate acknowledgment before processing: "Standby, over"
+        // Brief delay after user speech ends so channel settles and "Standby, over" is heard clearly.
+        if (config_.tx.standby_delay_ms > 0) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(config_.tx.standby_delay_ms));
+        }
+        // Do not wait for playback; start STT/LLM so response overlaps standby.
+        // Explicitly prepend VOX tone so radio opens before first word.
+        {
+            vad_->reset();
+            const std::string standby = "Standby, over";
+            AudioBuffer preroll = tts_->get_preroll_buffer();
+            AudioBuffer standby_speech = tts_->synth(standby);
+            AudioBuffer standby_audio;
+            standby_audio.reserve(preroll.size() + standby_speech.size());
+            standby_audio.insert(standby_audio.end(), preroll.begin(), preroll.end());
+            standby_audio.insert(standby_audio.end(), standby_speech.begin(), standby_speech.end());
+            tx_->transmit(standby_audio);
+        }
+        
         // Record utterance
         recorder_->record_utterance(current_utterance, utterance_id);
         int duration_ms = (current_utterance.size() * 1000) / config_.audio.sample_rate;
@@ -352,8 +377,9 @@ private:
     }
     
     void execute_fast_path(const Plan& plan, AudioBuffer& response_audio, int utterance_id) {
-        LOG_ROUTER(std::string("Fast path - speaking: \"") + plan.answer_text + "\"");
-        response_audio = tts_->synth_vox(plan.answer_text);
+        std::string text = utils::ensure_ends_with_over(plan.answer_text);
+        LOG_ROUTER(std::string("Fast path - speaking: \"") + text + "\"");
+        response_audio = tts_->synth_vox(text);
         recorder_->record_tts_output(response_audio, utterance_id);
         state_machine_->on_response_ready(response_audio);
         // Reset VAD before transmitting to prevent detecting our own voice
@@ -366,13 +392,14 @@ private:
                          AudioBuffer& response_audio, int utterance_id) {
         // Skip acknowledgment if ack_text is empty (just beep via VOX pre-roll)
         if (!plan.ack_text.empty()) {
-            LOG_ROUTER(std::string("LLM path - acknowledging first: \"") + plan.ack_text + "\"");
+            std::string ack_text = utils::ensure_ends_with_over(plan.ack_text);
+            LOG_ROUTER(std::string("LLM path - acknowledging first: \"") + ack_text + "\"");
             
             // Reset VAD before transmitting ack to prevent detecting our own voice
             vad_->reset();
             
             // Acknowledge first
-            AudioBuffer ack_audio = tts_->synth_vox(plan.ack_text);
+            AudioBuffer ack_audio = tts_->synth_vox(ack_text);
             tx_->transmit(ack_audio);
             
             // Wait for ack to complete
@@ -525,9 +552,10 @@ private:
             llm_response = "Stand by.";
         }
         
-        // Synthesize response
+        // Synthesize response (ensure transmission ends with " over.")
+        std::string response_text = utils::ensure_ends_with_over(llm_response);
         LOG_TTS("Synthesizing response...");
-        response_audio = tts_->synth_vox(llm_response);
+        response_audio = tts_->synth_vox(response_text);
         recorder_->record_tts_output(response_audio, utterance_id);
         state_machine_->on_response_ready(response_audio);
         
@@ -539,8 +567,9 @@ private:
     }
     
     void execute_fallback(const Plan& plan, AudioBuffer& response_audio, int utterance_id) {
-        LOG_ROUTER(std::string("Fallback - speaking: \"") + plan.fallback_text + "\"");
-        response_audio = tts_->synth_vox(plan.fallback_text);
+        std::string text = utils::ensure_ends_with_over(plan.fallback_text);
+        LOG_ROUTER(std::string("Fallback - speaking: \"") + text + "\"");
+        response_audio = tts_->synth_vox(text);
         recorder_->record_tts_output(response_audio, utterance_id);
         state_machine_->on_response_ready(response_audio);
         

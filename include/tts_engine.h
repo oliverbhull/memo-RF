@@ -19,8 +19,11 @@ public:
     // Synthesize text to audio
     AudioBuffer synth(const std::string& text);
     
-    // Synthesize with VOX pre-roll
+    // Synthesize with VOX pre-roll (tone + speech)
     AudioBuffer synth_vox(const std::string& text);
+    
+    // Return just the VOX pre-roll tone buffer (same as prepended in synth_vox)
+    AudioBuffer get_preroll_buffer();
     
     // Pre-load common phrases for caching
     void preload_phrase(const std::string& text);

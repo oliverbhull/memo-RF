@@ -30,16 +30,14 @@ Edit `config/config.json`:
 }
 ```
 
-## 3. Start llama.cpp Server
+## 3. Start LLM Server (Ollama or llama.cpp with Qwen)
 
 In a separate terminal:
 
-```bash
-cd /Users/oliverhull/dev/whisper.cpp
-./server -m /path/to/llama/model.gguf -c 2048 --port 8080
-```
+- **Ollama**: `ollama serve` then `ollama pull qwen2.5:7b`. Set `llm.endpoint` to `http://localhost:11434/api/chat` and `llm.model_name` to `qwen2.5:7b` in config.json.
+- **llama.cpp**: `./scripts/start_server.sh qwen 8080` or `./server -m /path/to/qwen2-1_5b-instruct-q5_k_m.gguf -c 2048 --port 8080`
 
-Or if you have llama.cpp server elsewhere, start it and update the endpoint in config.json.
+Update the endpoint in config.json to match (Ollama or http://localhost:8080).
 
 ## 4. Install/Configure Piper TTS
 

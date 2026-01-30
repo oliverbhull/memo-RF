@@ -25,11 +25,9 @@
    # Download voice model to memo-RF/models/
    ```
 
-5. **Start llama.cpp server**:
-   ```bash
-   cd ../whisper.cpp
-   ./server -m models/llama-2-7b.gguf -c 2048 --port 8080
-   ```
+5. **Start LLM server** (Ollama or llama.cpp with Qwen):
+   - Ollama: `ollama serve` then `ollama pull qwen2.5:7b`; set `llm.endpoint` to `http://localhost:11434/api/chat` and `llm.model_name` to `qwen2.5:7b`
+   - llama.cpp: `./scripts/start_server.sh qwen 8080` or `./server -m models/qwen2-1_5b-instruct-q5_k_m.gguf -c 2048 --port 8080`
 
 ## Build
 
@@ -71,7 +69,7 @@ cd build
 - Ensure model file exists
 
 ### "LLM timeout"
-- Verify llama.cpp server is running: `curl http://localhost:8080/health`
+- Ollama: `curl http://localhost:11434/api/tags` or llama.cpp: `curl http://localhost:8080/health`
 - Check server logs
 
 ### "Piper not found"

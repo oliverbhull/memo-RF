@@ -19,7 +19,7 @@
     "endpoint": "http://localhost:8080/completion",
     "timeout_ms": 5000,
     "max_tokens": 30,
-    "model_name": "llama",
+    "model_name": "qwen",
     "temperature": 0.3,
     "stop_sequences": ["</s>", "\n\n", "User:", "Human:", "Assistant:", "[end", "Remember,"]
   },

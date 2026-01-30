@@ -18,6 +18,7 @@ struct VADConfig {
     int min_speech_ms = 200;                  // Minimum speech duration to be valid
     int hangover_ms = 200;                    // Grace period after speech end
     int pause_tolerance_ms = 500;             // Allow pauses this long during speech without ending
+    bool debug_log_rms_each_frame = false;    // When true, log RMS and state every frame (verbose)
 };
 
 struct STTConfig {
@@ -29,19 +30,24 @@ struct LLMConfig {
     std::string endpoint = "http://localhost:8080/completion";
     int timeout_ms = 2000;
     int max_tokens = 100;
-    std::string model_name = "llama";
+    std::string model_name = "qwen";
     float temperature = 0.7f;
     std::vector<std::string> stop_sequences = {"</s>", "\n\n", "User:", "Human:"};
+    std::string system_prompt = "You are a helpful radio operator supporting field operators. "
+                               "Use clear, concise comms. Be succinct: one short sentence, under 15 words when possible. "
+                               "No preamble. Answer in standard radio procedure.";
 };
 
 struct TTSConfig {
     std::string voice_path;
-    int vox_preroll_ms = 200;
+    int vox_preroll_ms = 350;       ///< Tone duration before speech so VOX opens (ms)
+    float vox_preroll_amplitude = 0.55f;  ///< Tone amplitude 0–1 so VOX reliably triggers
     float output_gain = 1.0f;
 };
 
 struct TXConfig {
     int max_transmit_ms = 20000;  // Maximum transmission time in ms (0 = no limit)
+    int standby_delay_ms = 200;   // Delay after user speech ends before sending "Standby, over" (ms)
     bool enable_start_chirp = false;
     bool enable_end_chirp = false;
 };

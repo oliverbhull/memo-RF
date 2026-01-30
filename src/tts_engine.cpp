@@ -9,6 +9,11 @@
 #include <vector>
 #include <chrono>
 #include <sstream>
+#include <unistd.h>
+#include <signal.h>
+#include <sys/wait.h>
+#include <fcntl.h>
+#include <mutex>
 
 #ifndef M_PI
 #define M_PI 3.14159265358979323846
@@ -18,216 +23,446 @@ namespace memo_rf {
 
 class TTSEngine::Impl {
 public:
-    Impl(const TTSConfig& config) : config_(config) {
-        // For v1, we'll use a simple approach:
-        // - Call piper via command line (external process)
-        // - Cache common phrases
-        // - Generate VOX pre-roll
-        
+    Impl(const TTSConfig& config)
+        : config_(config)
+        , piper_pid_(-1)
+        , pipe_to_piper_{-1, -1}
+        , pipe_from_piper_{-1, -1}
+        , piper_initialized_(false)
+    {
         preroll_samples_ = (config_.vox_preroll_ms * DEFAULT_SAMPLE_RATE) / 1000;
-        
-        // Pre-load common phrases disabled for now (TTS has espeak-ng dependency issue)
-        // These will be generated on-demand when TTS is fixed
-        // TODO: Re-enable once espeak-ng is installed
+
+        // Find piper binary path once
+        find_piper_path();
+
+        // Start persistent piper process
+        if (!piper_path_.empty()) {
+            start_piper_process();
+        }
     }
-    
+
+    ~Impl() {
+        stop_piper_process();
+    }
+
     AudioBuffer synth(const std::string& text) {
+        std::lock_guard<std::mutex> lock(synth_mutex_);
+
         // Check cache first
         auto it = cache_.find(text);
         if (it != cache_.end()) {
+            LOG_TTS("Cache hit for: \"" + text + "\"");
             return it->second;
         }
-        
-        // Generate using piper (external process)
-        AudioBuffer audio = call_piper(text);
-        
+
+        // Generate using persistent piper process
+        AudioBuffer audio;
+        if (piper_initialized_) {
+            audio = synth_via_persistent_piper(text);
+        } else {
+            // Fallback to spawning process (slower)
+            audio = synth_via_system_call(text);
+        }
+
         // Apply gain
         for (auto& sample : audio) {
             sample = static_cast<Sample>(std::clamp(
                 static_cast<float>(sample) * config_.output_gain,
                 -32768.0f, 32767.0f));
         }
-        
+
         // Cache if short enough
-        if (text.length() < 50) {
+        if (!audio.empty() && text.length() < 50) {
             cache_[text] = audio;
         }
-        
+
         return audio;
     }
-    
+
     AudioBuffer synth_vox(const std::string& text) {
         AudioBuffer audio = synth(text);
-        
+
         // Generate pre-roll (tone burst)
         AudioBuffer preroll = generate_preroll();
-        
+
         // Combine (pre-allocate to avoid reallocation)
         AudioBuffer result;
         result.reserve(preroll.size() + audio.size());
         result.insert(result.end(), preroll.begin(), preroll.end());
         result.insert(result.end(), audio.begin(), audio.end());
-        
+
         return result;
     }
-    
+
+    AudioBuffer get_preroll_buffer() {
+        return generate_preroll();
+    }
+
     void preload_phrase(const std::string& text) {
         // Try to preload, but don't throw on failure
-        AudioBuffer audio = call_piper(text);
+        AudioBuffer audio = synth(text);
         if (!audio.empty() && text.length() < 50) {
             cache_[text] = audio;
         }
     }
 
 private:
-    AudioBuffer call_piper(const std::string& text) {
-        // For v1: call piper via command line
-        // Try to find piper in common locations or use full path
-        
-        std::string piper_cmd = "piper";
-        
+    void find_piper_path() {
         // Try common locations
         std::vector<std::string> possible_paths = {
             "/Users/oliverhull/dev/piper/build/piper",
             "/usr/local/bin/piper",
             "/opt/homebrew/bin/piper"
         };
-        
-        // Check if piper is in PATH first
-        int path_check = system("which piper > /dev/null 2>&1");
-        if (path_check != 0) {
-            // Not in PATH, try full paths
-            bool found = false;
-            for (const auto& path : possible_paths) {
-                std::ifstream test(path);
-                if (test.good()) {
-                    piper_cmd = path;
-                    found = true;
-                    break;
+
+        for (const auto& path : possible_paths) {
+            std::ifstream test(path);
+            if (test.good()) {
+                piper_path_ = path;
+                LOG_TTS("Found piper at: " + piper_path_);
+                return;
+            }
+        }
+
+        // Try PATH
+        FILE* fp = popen("which piper 2>/dev/null", "r");
+        if (fp) {
+            char buffer[256];
+            if (fgets(buffer, sizeof(buffer), fp)) {
+                piper_path_ = buffer;
+                // Remove trailing newline
+                while (!piper_path_.empty() && (piper_path_.back() == '\n' || piper_path_.back() == '\r')) {
+                    piper_path_.pop_back();
                 }
+                LOG_TTS("Found piper in PATH: " + piper_path_);
             }
-            if (!found) {
-                // Don't print error during preload - will fail silently
-                return AudioBuffer();
+            pclose(fp);
+        }
+
+        if (piper_path_.empty()) {
+            LOG_TTS("WARNING: Piper not found!");
+        }
+    }
+
+    void start_piper_process() {
+        LOG_TTS("Starting persistent piper process...");
+
+        // Create pipes for communication
+        if (pipe(pipe_to_piper_) == -1 || pipe(pipe_from_piper_) == -1) {
+            LOG_TTS("Failed to create pipes for piper");
+            return;
+        }
+
+        piper_pid_ = fork();
+
+        if (piper_pid_ == -1) {
+            LOG_TTS("Failed to fork piper process");
+            close(pipe_to_piper_[0]);
+            close(pipe_to_piper_[1]);
+            close(pipe_from_piper_[0]);
+            close(pipe_from_piper_[1]);
+            return;
+        }
+
+        if (piper_pid_ == 0) {
+            // Child process - exec piper
+
+            // Redirect stdin from pipe
+            dup2(pipe_to_piper_[0], STDIN_FILENO);
+            close(pipe_to_piper_[0]);
+            close(pipe_to_piper_[1]);
+
+            // Redirect stdout to pipe
+            dup2(pipe_from_piper_[1], STDOUT_FILENO);
+            close(pipe_from_piper_[0]);
+            close(pipe_from_piper_[1]);
+
+            // Redirect stderr to /dev/null (or keep for debugging)
+            int devnull = open("/dev/null", O_WRONLY);
+            if (devnull >= 0) {
+                dup2(devnull, STDERR_FILENO);
+                close(devnull);
+            }
+
+            // Execute piper with --json-input for persistent mode
+            // Output raw audio to stdout
+            execl(piper_path_.c_str(), "piper",
+                  "--model", config_.voice_path.c_str(),
+                  "--espeak_data", "/opt/homebrew/share/espeak-ng-data",
+                  "--json-input",
+                  "--output_raw",
+                  "--quiet",
+                  nullptr);
+
+            // If exec fails
+            _exit(1);
+        }
+
+        // Parent process
+        close(pipe_to_piper_[0]);   // Close read end of stdin pipe
+        close(pipe_from_piper_[1]); // Close write end of stdout pipe
+
+        // Set stdout pipe to non-blocking
+        int flags = fcntl(pipe_from_piper_[0], F_GETFL, 0);
+        fcntl(pipe_from_piper_[0], F_SETFL, flags | O_NONBLOCK);
+
+        // Give piper a moment to initialize
+        usleep(500000);  // 500ms
+
+        // Check if process is still running
+        int status;
+        pid_t result = waitpid(piper_pid_, &status, WNOHANG);
+        if (result == 0) {
+            // Process is still running
+            piper_initialized_ = true;
+            LOG_TTS("Persistent piper process started (PID: " + std::to_string(piper_pid_) + ")");
+        } else {
+            LOG_TTS("Piper process failed to start");
+            piper_pid_ = -1;
+        }
+    }
+
+    void stop_piper_process() {
+        if (piper_pid_ > 0) {
+            LOG_TTS("Stopping persistent piper process...");
+
+            // Close pipes
+            if (pipe_to_piper_[1] >= 0) {
+                close(pipe_to_piper_[1]);
+                pipe_to_piper_[1] = -1;
+            }
+            if (pipe_from_piper_[0] >= 0) {
+                close(pipe_from_piper_[0]);
+                pipe_from_piper_[0] = -1;
+            }
+
+            // Send SIGTERM
+            kill(piper_pid_, SIGTERM);
+
+            // Wait for process to exit
+            int status;
+            waitpid(piper_pid_, &status, 0);
+
+            piper_pid_ = -1;
+            piper_initialized_ = false;
+        }
+    }
+
+    AudioBuffer synth_via_persistent_piper(const std::string& text) {
+        auto start_time = std::chrono::steady_clock::now();
+
+        // Create JSON input for piper
+        // Format: {"text": "hello world"}
+        std::string json_input = "{\"text\": \"" + escape_json(text) + "\"}\n";
+
+        LOG_TTS("Sending to piper: " + json_input);
+
+        // Write to piper stdin
+        ssize_t written = write(pipe_to_piper_[1], json_input.c_str(), json_input.size());
+        if (written != static_cast<ssize_t>(json_input.size())) {
+            LOG_TTS("Failed to write to piper stdin");
+            // Try to restart piper
+            stop_piper_process();
+            start_piper_process();
+            return synth_via_system_call(text);  // Fallback
+        }
+
+        // Give piper time to start processing before we start reading
+        usleep(100000);  // 100ms initial delay
+
+        // Read raw audio from piper stdout
+        // Piper outputs 16-bit PCM at 22050Hz
+        AudioBuffer raw_audio;
+        raw_audio.reserve(22050 * 10);  // Reserve space for up to 10 seconds
+
+        const int piper_sample_rate = 22050;
+        char buffer[8192];  // Larger buffer
+        int consecutive_empty = 0;
+        const int max_empty_after_data = 100;  // 100 * 10ms = 1s of no data after receiving some
+        const int max_empty_initial = 300;     // 300 * 10ms = 3s timeout waiting for first data
+        bool received_any_data = false;
+
+        // Read audio data
+        while (true) {
+            ssize_t bytes_read = read(pipe_from_piper_[0], buffer, sizeof(buffer));
+
+            if (bytes_read > 0) {
+                received_any_data = true;
+                consecutive_empty = 0;
+                // Convert bytes to samples
+                for (ssize_t i = 0; i + 1 < bytes_read; i += 2) {
+                    Sample sample = static_cast<Sample>(
+                        static_cast<uint8_t>(buffer[i]) |
+                        (static_cast<int8_t>(buffer[i + 1]) << 8)
+                    );
+                    raw_audio.push_back(sample);
+                }
+            } else if (bytes_read == 0) {
+                // EOF - piper closed stdout (shouldn't happen)
+                LOG_TTS("Piper closed stdout unexpectedly");
+                break;
+            } else {
+                // EAGAIN/EWOULDBLOCK - no data available yet
+                consecutive_empty++;
+
+                // Different timeouts depending on whether we've received any data
+                int max_empty = received_any_data ? max_empty_after_data : max_empty_initial;
+
+                if (consecutive_empty >= max_empty) {
+                    if (!received_any_data) {
+                        LOG_TTS("Timeout waiting for piper data");
+                    }
+                    break;  // Done (either timeout or end of audio)
+                }
+
+                usleep(10000);  // Wait 10ms
             }
         }
-        
-        std::string temp_wav = "/tmp/memo_rf_tts_temp_" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()) + ".wav";
-        
-        // Use piper's --espeak_data flag (more reliable than environment variable)
-        std::string espeak_path = "/opt/homebrew/share/espeak-ng-data";
-        
-        // Escape text for shell (replace quotes and special chars)
-        std::string escaped_text = text;
-        // Replace " with \"
-        size_t pos = 0;
-        while ((pos = escaped_text.find("\"", pos)) != std::string::npos) {
-            escaped_text.replace(pos, 1, "\\\"");
-            pos += 2;
+
+        if (raw_audio.empty()) {
+            LOG_TTS("No audio received from piper, falling back to system call");
+            return synth_via_system_call(text);
         }
-        // Replace $ with \$ to prevent variable expansion
-        pos = 0;
-        while ((pos = escaped_text.find("$", pos)) != std::string::npos) {
-            escaped_text.replace(pos, 1, "\\$");
-            pos += 2;
-        }
-        // Replace ` with \` to prevent command substitution
-        pos = 0;
-        while ((pos = escaped_text.find("`", pos)) != std::string::npos) {
-            escaped_text.replace(pos, 1, "\\`");
-            pos += 2;
-        }
-        
-        // Use echo to pipe text to piper with --espeak_data flag
-        std::string cmd = "echo \"" + escaped_text + "\" | " + piper_cmd + 
-                        " --model " + config_.voice_path + 
-                        " --espeak_data " + espeak_path +
-                        " --output_file " + temp_wav;
-        
-        LOG_TTS("Calling piper: " + piper_cmd);
-        LOG_TTS("Text: \"" + text + "\"");
-        LOG_TTS("Command: " + cmd);
-        
+
+        auto synth_time = std::chrono::steady_clock::now();
+        auto synth_ms = std::chrono::duration_cast<std::chrono::milliseconds>(synth_time - start_time).count();
+
+        // Resample from 22050Hz to 16000Hz
+        AudioBuffer resampled = resample(raw_audio, piper_sample_rate, DEFAULT_SAMPLE_RATE);
+
+        auto total_time = std::chrono::steady_clock::now();
+        auto total_ms = std::chrono::duration_cast<std::chrono::milliseconds>(total_time - start_time).count();
+
+        std::ostringstream oss;
+        oss << "Synthesized " << resampled.size() << " samples in " << total_ms << "ms "
+            << "(synth=" << synth_ms << "ms)";
+        LOG_TTS(oss.str());
+
+        return resampled;
+    }
+
+    AudioBuffer synth_via_system_call(const std::string& text) {
+        // Fallback: spawn piper process (slower)
+        LOG_TTS("Using fallback system() call for TTS");
+
+        std::string temp_wav = "/tmp/memo_rf_tts_temp_" +
+            std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()) + ".wav";
+
+        std::string escaped_text = escape_shell(text);
+
+        std::string cmd = "echo \"" + escaped_text + "\" | " + piper_path_ +
+                        " --model " + config_.voice_path +
+                        " --espeak_data /opt/homebrew/share/espeak-ng-data" +
+                        " --output_file " + temp_wav + " 2>/dev/null";
+
         int ret = system(cmd.c_str());
-        std::ostringstream ret_oss;
-        ret_oss << "Piper returned: " << ret;
-        LOG_TTS(ret_oss.str());
-        
+
         if (ret != 0) {
-            std::ostringstream err_oss;
-            err_oss << "Piper command failed with code: " << ret;
-            LOG_TTS(err_oss.str());
-            LOG_TTS("Command was: " + cmd);
+            LOG_TTS("Piper system call failed");
             return AudioBuffer();
         }
-        
-        LOG_TTS("Checking for output file: " + temp_wav);
-        
-        // Read WAV file
-        LOG_TTS("Reading WAV file...");
+
         AudioBuffer audio = read_wav(temp_wav);
-        std::ostringstream read_oss;
-        read_oss << "Read " << audio.size() << " samples";
-        LOG_TTS(read_oss.str());
-        
-        // Clean up
         remove(temp_wav.c_str());
-        
-        if (audio.empty()) {
-            LOG_TTS("Failed to generate audio for: \"" + text + "\"");
-            LOG_TTS("WAV file may be empty or missing");
-        }
-        
+
         return audio;
     }
-    
+
+    std::string escape_json(const std::string& text) {
+        std::string result;
+        result.reserve(text.size() * 2);
+
+        for (char c : text) {
+            switch (c) {
+                case '"':  result += "\\\""; break;
+                case '\\': result += "\\\\"; break;
+                case '\n': result += "\\n"; break;
+                case '\r': result += "\\r"; break;
+                case '\t': result += "\\t"; break;
+                default:   result += c; break;
+            }
+        }
+
+        return result;
+    }
+
+    std::string escape_shell(const std::string& text) {
+        std::string result = text;
+        size_t pos = 0;
+
+        // Escape special shell characters
+        while ((pos = result.find("\"", pos)) != std::string::npos) {
+            result.replace(pos, 1, "\\\"");
+            pos += 2;
+        }
+        pos = 0;
+        while ((pos = result.find("$", pos)) != std::string::npos) {
+            result.replace(pos, 1, "\\$");
+            pos += 2;
+        }
+        pos = 0;
+        while ((pos = result.find("`", pos)) != std::string::npos) {
+            result.replace(pos, 1, "\\`");
+            pos += 2;
+        }
+
+        return result;
+    }
+
+    AudioBuffer resample(const AudioBuffer& input, int from_rate, int to_rate) {
+        if (from_rate == to_rate) return input;
+
+        float ratio = static_cast<float>(from_rate) / static_cast<float>(to_rate);
+        size_t output_samples = static_cast<size_t>(input.size() / ratio);
+
+        AudioBuffer output;
+        output.reserve(output_samples);
+
+        for (size_t i = 0; i < output_samples; i++) {
+            float input_pos = static_cast<float>(i) * ratio;
+            size_t idx0 = static_cast<size_t>(input_pos);
+            size_t idx1 = std::min(idx0 + 1, input.size() - 1);
+
+            if (idx0 >= input.size()) break;
+
+            float t = input_pos - idx0;
+            float sample0 = static_cast<float>(input[idx0]);
+            float sample1 = static_cast<float>(input[idx1]);
+            float interpolated = sample0 * (1.0f - t) + sample1 * t;
+
+            output.push_back(static_cast<Sample>(interpolated));
+        }
+
+        return output;
+    }
+
     AudioBuffer read_wav(const std::string& path) {
         std::ifstream file(path, std::ios::binary);
         if (!file.is_open()) {
-            LOG_TTS("Failed to open WAV file: " + path);
             return AudioBuffer();
         }
-        
-        // Read WAV header to get sample rate
+
         char header[44];
         file.read(header, 44);
         if (file.gcount() < 44) {
-            LOG_TTS("WAV file too short or invalid header");
             return AudioBuffer();
         }
-        
-        // Extract sample rate from WAV header (offset 24-27, little-endian)
+
         int wav_sample_rate = static_cast<unsigned char>(header[24]) |
                               (static_cast<unsigned char>(header[25]) << 8) |
                               (static_cast<unsigned char>(header[26]) << 16) |
                               (static_cast<unsigned char>(header[27]) << 24);
-        
-        // Extract number of channels (offset 22-23, little-endian)
+
         int channels = static_cast<unsigned char>(header[22]) |
                        (static_cast<unsigned char>(header[23]) << 8);
-        
-        // Extract data size (offset 40-43, little-endian)
-        int data_size = static_cast<unsigned char>(header[40]) |
-                        (static_cast<unsigned char>(header[41]) << 8) |
-                        (static_cast<unsigned char>(header[42]) << 16) |
-                        (static_cast<unsigned char>(header[43]) << 24);
-        
-        std::ostringstream info_oss;
-        info_oss << "WAV file: sample_rate=" << wav_sample_rate 
-                 << "Hz, channels=" << channels << ", data_size=" << data_size;
-        LOG_TTS(info_oss.str());
-        
-        // Read PCM16 samples
+
         AudioBuffer raw_audio;
         Sample sample;
-        int samples_to_read = data_size / sizeof(Sample);
-        raw_audio.reserve(samples_to_read);
-        
         while (file.read(reinterpret_cast<char*>(&sample), sizeof(Sample))) {
             raw_audio.push_back(sample);
         }
-        
-        // If stereo, convert to mono (take left channel only)
+
+        // Convert stereo to mono if needed
         AudioBuffer mono_audio;
         if (channels == 2) {
             mono_audio.reserve(raw_audio.size() / 2);
@@ -235,71 +470,47 @@ private:
                 mono_audio.push_back(raw_audio[i]);
             }
         } else {
-            mono_audio = raw_audio;
+            mono_audio = std::move(raw_audio);
         }
-        
-        // Resample to 16kHz if needed
-        if (wav_sample_rate == DEFAULT_SAMPLE_RATE) {
-            return mono_audio;
+
+        // Resample if needed
+        if (wav_sample_rate != DEFAULT_SAMPLE_RATE) {
+            return resample(mono_audio, wav_sample_rate, DEFAULT_SAMPLE_RATE);
         }
-        
-        // Resample using linear interpolation
-        // Calculate how many output samples we need
-        float ratio = static_cast<float>(wav_sample_rate) / static_cast<float>(DEFAULT_SAMPLE_RATE);
-        size_t output_samples = static_cast<size_t>(mono_audio.size() / ratio);
-        AudioBuffer resampled;
-        resampled.reserve(output_samples);
-        
-        // Generate output samples at target rate
-        for (size_t out_idx = 0; out_idx < output_samples; out_idx++) {
-            // Calculate position in input buffer
-            float input_pos = static_cast<float>(out_idx) * ratio;
-            size_t idx0 = static_cast<size_t>(input_pos);
-            size_t idx1 = std::min(idx0 + 1, mono_audio.size() - 1);
-            
-            if (idx0 >= mono_audio.size()) break;
-            
-            // Linear interpolation
-            float t = input_pos - idx0;
-            float sample0 = static_cast<float>(mono_audio[idx0]);
-            float sample1 = static_cast<float>(mono_audio[idx1]);
-            float interpolated = sample0 * (1.0f - t) + sample1 * t;
-            
-            resampled.push_back(static_cast<Sample>(interpolated));
-        }
-        
-        std::ostringstream resample_oss;
-        resample_oss << "Resampled from " << wav_sample_rate << "Hz to " 
-                     << DEFAULT_SAMPLE_RATE << "Hz: " << mono_audio.size() 
-                     << " -> " << resampled.size() << " samples";
-        LOG_TTS(resample_oss.str());
-        
-        return resampled;
+
+        return mono_audio;
     }
-    
+
     AudioBuffer generate_preroll() {
         AudioBuffer preroll(preroll_samples_);
-        
-        // Generate tone burst (440 Hz sine wave)
-        float freq = 440.0f;
-        float sample_rate = static_cast<float>(DEFAULT_SAMPLE_RATE);
-        
+
+        const float freq = 440.0f;
+        const float sample_rate = static_cast<float>(DEFAULT_SAMPLE_RATE);
+        const float amplitude = config_.vox_preroll_amplitude;
+
         for (size_t i = 0; i < preroll_samples_; i++) {
             float t = static_cast<float>(i) / sample_rate;
-            float amplitude = 0.3f; // Moderate level to trigger VOX
             float value = amplitude * std::sin(2.0f * M_PI * freq * t);
-            preroll[i] = static_cast<Sample>(value * 32767.0f);
+            preroll[i] = static_cast<Sample>(std::clamp(value * 32767.0f, -32768.0f, 32767.0f));
         }
-        
+
         return preroll;
     }
-    
+
     TTSConfig config_;
+    std::string piper_path_;
     std::map<std::string, AudioBuffer> cache_;
     size_t preroll_samples_;
+
+    // Persistent piper process
+    pid_t piper_pid_;
+    int pipe_to_piper_[2];    // [0] = read, [1] = write
+    int pipe_from_piper_[2];  // [0] = read, [1] = write
+    bool piper_initialized_;
+    std::mutex synth_mutex_;
 };
 
-TTSEngine::TTSEngine(const TTSConfig& config) 
+TTSEngine::TTSEngine(const TTSConfig& config)
     : pimpl_(std::make_unique<Impl>(config)) {}
 
 TTSEngine::~TTSEngine() = default;
@@ -310,6 +521,10 @@ AudioBuffer TTSEngine::synth(const std::string& text) {
 
 AudioBuffer TTSEngine::synth_vox(const std::string& text) {
     return pimpl_->synth_vox(text);
+}
+
+AudioBuffer TTSEngine::get_preroll_buffer() {
+    return pimpl_->get_preroll_buffer();
 }
 
 void TTSEngine::preload_phrase(const std::string& text) {

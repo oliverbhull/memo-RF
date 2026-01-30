@@ -9,7 +9,7 @@ Single C++ binary with modular components:
 - **VAD + Endpointing**: Energy-based voice activity detection
 - **STT Engine**: Whisper.cpp for transcription
 - **Router**: Fast path rules + LLM routing
-- **LLM Client**: HTTP client for llama.cpp server
+- **LLM Client**: HTTP client for Ollama or llama.cpp server (e.g. Qwen)
 - **TTS Engine**: Piper (external process) for speech synthesis
 - **TX Controller**: VOX-based transmission control
 - **State Machine**: Core loop state management
@@ -96,10 +96,9 @@ See `docs/VOICE_CONFIG.md` for voice configuration options.
 
 ### Prerequisites
 
-1. **Start llama.cpp server**:
-   ```bash
-   ./server -m models/llama-2-7b.gguf -c 2048 --port 8080
-   ```
+1. **Start LLM server** (Ollama or llama.cpp):
+   - **Ollama**: `ollama serve` then `ollama pull qwen2.5:7b`; set `llm.endpoint` to `http://localhost:11434/api/chat` and `llm.model_name` to `qwen2.5:7b`
+   - **llama.cpp**: `./scripts/start_server.sh qwen 8080` (uses Qwen GGUF) or `./server -m models/qwen2-1_5b-instruct-q5_k_m.gguf -c 2048 --port 8080`
 
 2. **Ensure Piper is in PATH**:
    ```bash
@@ -171,7 +170,7 @@ Pre-configured fast responses (no LLM):
 - Verify whisper.cpp is built and libraries are linked
 
 ### LLM timeout
-- Check llama.cpp server is running: `curl http://localhost:8080/health`
+- Check Ollama: `curl http://localhost:11434/api/tags` or llama.cpp: `curl http://localhost:8080/health`
 - Increase `timeout_ms` in config if needed
 - Check network connectivity
 

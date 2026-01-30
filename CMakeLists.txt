@@ -170,8 +170,29 @@ endif()
 message(STATUS "Found whisper.h at: ${WHISPER_INCLUDE_DIR}")
 message(STATUS "Found whisper library at: ${WHISPER_LIB}")
 
-# Source files
-set(SOURCES
+# Source files - Core (new architecture)
+set(CORE_SOURCES
+    src/core/config.cpp
+    src/core/types.cpp
+)
+
+# Source files - VAD (new architecture)
+set(VAD_SOURCES
+    src/vad/energy_vad.cpp
+)
+
+# Source files - TTS (new architecture)
+set(TTS_SOURCES
+    src/tts/piper_tts.cpp
+)
+
+# Source files - Memory (new architecture)
+set(MEMORY_SOURCES
+    src/memory/conversation_memory.cpp
+)
+
+# Source files - Legacy (existing code)
+set(LEGACY_SOURCES
     src/main.cpp
     src/agent.cpp
     src/audio_io.cpp
@@ -193,8 +214,43 @@ set(SOURCES
     src/tools/internal_search_tool.cpp
 )
 
-# Header files
-set(HEADERS
+# All sources
+set(SOURCES
+    ${CORE_SOURCES}
+    ${VAD_SOURCES}
+    ${TTS_SOURCES}
+    ${MEMORY_SOURCES}
+    ${LEGACY_SOURCES}
+)
+
+# Header files - Core (new architecture)
+set(CORE_HEADERS
+    include/core/types.h
+    include/core/constants.h
+    include/core/config.h
+    include/core/ring_buffer.h
+    include/core/compat.h
+)
+
+# Header files - VAD (new architecture)
+set(VAD_HEADERS
+    include/vad/vad_interface.h
+    include/vad/energy_vad.h
+)
+
+# Header files - TTS (new architecture)
+set(TTS_HEADERS
+    include/tts/tts_interface.h
+    include/tts/piper_tts.h
+)
+
+# Header files - Memory (new architecture)
+set(MEMORY_HEADERS
+    include/memory/conversation_memory.h
+)
+
+# Header files - Legacy (existing code)
+set(LEGACY_HEADERS
     include/agent.h
     include/audio_io.h
     include/vad_endpointing.h
@@ -216,6 +272,15 @@ set(HEADERS
     include/tools/log_memo_tool.h
     include/tools/external_research_tool.h
     include/tools/internal_search_tool.h
+)
+
+# All headers
+set(HEADERS
+    ${CORE_HEADERS}
+    ${VAD_HEADERS}
+    ${TTS_HEADERS}
+    ${MEMORY_HEADERS}
+    ${LEGACY_HEADERS}
 )
 
 # Executable

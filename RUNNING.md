@@ -7,8 +7,8 @@
    - If not running, start it: `ollama serve` (usually runs automatically)
 
 2. **Ollama model with function calling support**
-   - You have `llama3.1:8b` installed ✓
-   - If you need to pull it: `ollama pull llama3.1:8b`
+   - You have `qwen2.5:7b` installed ✓
+   - If you need to pull it: `ollama pull qwen2.5:7b`
 
 3. **Other dependencies** (from original README):
    - Whisper model for STT
@@ -36,7 +36,7 @@ make -j$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 4)
 
 Check that `config/config.json` has:
 - `llm.endpoint`: `"http://localhost:11434/api/chat"`
-- `llm.model_name`: `"llama3.1:8b"` (or whatever model you have)
+- `llm.model_name`: `"qwen2.5:7b"` (or whatever model you have)
 - `tools.enabled`: `["log_memo", "external_research", "internal_search"]`
 
 ### 3. Run the agent
@@ -81,7 +81,7 @@ Or from project root:
 curl http://localhost:11434/api/tags
 
 # Check if model exists
-curl -X POST http://localhost:11434/api/show -d '{"name": "llama3.1:8b"}'
+curl -X POST http://localhost:11434/api/show -d '{"name": "qwen2.5:7b"}'
 ```
 
 ### Model name mismatch

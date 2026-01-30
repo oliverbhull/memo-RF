@@ -1,8 +1,10 @@
 #include "vad_endpointing.h"
 #include "common.h"
+#include "logger.h"
 #include <algorithm>
 #include <cmath>
 #include <deque>
+#include <sstream>
 
 namespace memo_rf {
 
@@ -20,54 +22,78 @@ public:
         end_silence_samples_ = (config.end_of_utterance_silence_ms * sample_rate) / 1000;
         max_hangover_samples_ = (config.hangover_ms * sample_rate) / 1000;
         pause_tolerance_samples_ = (config.pause_tolerance_ms * sample_rate) / 1000;
+        start_threshold_ = config_.threshold;
+        end_threshold_ = config_.threshold * 0.5f;  // Hysteresis: only count as "speech" if rms above this; lowers chance of getting stuck
+        start_frames_required_ = 2;  // Debounce: require 2 consecutive hot frames (~40ms) before SpeechStart
     }
     
     VADEvent process(const AudioFrame& frame) {
-        // Simple energy-based VAD
-        float energy = compute_energy(frame);
-        bool is_speech = energy > config_.threshold;
+        float rms = compute_energy(frame);
+        // Start: use strict threshold; once in speech, use lower threshold (hysteresis)
+        bool above_start = rms > start_threshold_;
+        bool above_end = rms > end_threshold_;
         
         VADEvent event = VADEvent::None;
         
+        if (config_.debug_log_rms_each_frame) {
+            const char* state_str = (state_ == VADState::Silence) ? "Silence" :
+                (state_ == VADState::Speech) ? "Speech" : "Hangover";
+            std::ostringstream oss;
+            oss << "[VAD] rms=" << rms << " start_thr=" << start_threshold_
+                << " end_thr=" << end_threshold_ << " state=" << state_str
+                << " above_start=" << (above_start ? 1 : 0) << " above_end=" << (above_end ? 1 : 0);
+            Logger::info(oss.str());
+        }
+        
         switch (state_) {
-            case VADState::Silence:
-                if (is_speech) {
-                    state_ = VADState::Speech;
-                    speech_samples_ = frame.size();
-                    silence_samples_ = 0;
-                    current_segment_.clear();
-                    current_segment_.insert(current_segment_.end(), frame.begin(), frame.end());
-                    event = VADEvent::SpeechStart;
+            case VADState::Silence: {
+                // Start debounce: require N consecutive frames above start threshold
+                if (above_start) {
+                    consecutive_speech_frames_++;
+                    if (consecutive_speech_frames_ >= start_frames_required_) {
+                        state_ = VADState::Speech;
+                        speech_samples_ = frame.size();
+                        silence_samples_ = 0;
+                        consecutive_speech_frames_ = 0;
+                        debug_samples_since_log_ = 0;
+                        current_segment_.clear();
+                        current_segment_.insert(current_segment_.end(), frame.begin(), frame.end());
+                        event = VADEvent::SpeechStart;
+                        std::ostringstream oss;
+                        oss << "[VAD] SpeechStart rms=" << rms << " threshold=" << start_threshold_;
+                        Logger::info(oss.str());
+                    }
+                } else {
+                    consecutive_speech_frames_ = 0;
                 }
                 break;
+            }
                 
-            case VADState::Speech:
-                // Always accumulate frames during speech (even during pauses)
+            case VADState::Speech: {
+                // Hysteresis: during speech, treat as "speech" if above end_threshold (lower)
+                bool is_speech = above_end;
                 current_segment_.insert(current_segment_.end(), frame.begin(), frame.end());
+                debug_samples_since_log_ += static_cast<int64_t>(frame.size());
                 
                 if (is_speech) {
-                    // Speech detected - reset silence counter
                     speech_samples_ += frame.size();
                     silence_samples_ = 0;
                 } else {
-                    // Silence detected - accumulate silence
                     silence_samples_ += frame.size();
                     
-                    // Check if silence exceeds pause tolerance (brief pause during speech)
                     if (silence_samples_ >= pause_tolerance_samples_ && 
                         silence_samples_ < end_silence_samples_) {
-                        // Still within pause tolerance - continue accumulating but don't count as speech
-                        // This allows user to pause and continue speaking
-                        // Do nothing, just keep accumulating
+                        // within pause tolerance - keep accumulating
                     } else if (silence_samples_ >= end_silence_samples_) {
-                        // Silence exceeded end threshold - end the utterance
-                        // Check if we have enough speech
                         if (speech_samples_ >= min_speech_samples_) {
                             state_ = VADState::Hangover;
                             current_hangover_samples_ = 0;
                             event = VADEvent::SpeechEnd;
+                            std::ostringstream oss;
+                            oss << "[VAD] SpeechEnd rms=" << rms << " threshold=" << end_threshold_
+                                << " silence_ms=" << (silence_samples_ * 1000 / DEFAULT_SAMPLE_RATE);
+                            Logger::info(oss.str());
                         } else {
-                            // Too short, discard
                             state_ = VADState::Silence;
                             current_segment_.clear();
                             speech_samples_ = 0;
@@ -75,22 +101,31 @@ public:
                         }
                     }
                 }
+                if (debug_samples_since_log_ >= DEFAULT_SAMPLE_RATE / 2) {
+                    debug_samples_since_log_ = 0;
+                    std::ostringstream oss;
+                    oss << "[VAD] state=Speech rms=" << rms << " end_thr=" << end_threshold_
+                        << " is_speech=" << (is_speech ? 1 : 0)
+                        << " silence_ms=" << (silence_samples_ * 1000 / DEFAULT_SAMPLE_RATE)
+                        << " speech_ms=" << (speech_samples_ * 1000 / DEFAULT_SAMPLE_RATE);
+                    Logger::info(oss.str());
+                }
                 break;
+            }
                 
             case VADState::Hangover:
                 current_hangover_samples_ += frame.size();
-                if (is_speech) {
-                    // Speech resumed during hangover - continue the utterance
+                if (above_end) {
                     state_ = VADState::Speech;
                     current_segment_.insert(current_segment_.end(), frame.begin(), frame.end());
                     speech_samples_ += frame.size();
                     silence_samples_ = 0;
                     current_hangover_samples_ = 0;
                 } else if (current_hangover_samples_ >= max_hangover_samples_) {
-                    // Hangover period expired - finalize
                     state_ = VADState::Silence;
                     speech_samples_ = 0;
                     silence_samples_ = 0;
+                    debug_samples_since_log_ = 0;
                 }
                 break;
         }
@@ -113,6 +148,8 @@ public:
         speech_samples_ = 0;
         silence_samples_ = 0;
         current_hangover_samples_ = 0;
+        consecutive_speech_frames_ = 0;
+        debug_samples_since_log_ = 0;
         current_segment_.clear();
     }
 
@@ -137,6 +174,10 @@ private:
     
     VADConfig config_;
     VADState state_;
+    float start_threshold_;
+    float end_threshold_;
+    int start_frames_required_;
+    int consecutive_speech_frames_ = 0;
     int64_t speech_samples_;
     int64_t silence_samples_;
     int64_t current_hangover_samples_;
@@ -144,6 +185,7 @@ private:
     int64_t end_silence_samples_;
     int64_t max_hangover_samples_;
     int64_t pause_tolerance_samples_;
+    int64_t debug_samples_since_log_ = 0;
     AudioBuffer current_segment_;
 };
 

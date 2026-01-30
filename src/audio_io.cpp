@@ -342,6 +342,13 @@ public:
         return playback_complete_ && playback_queue_.empty();
     }
     
+    void flush_input_queue() {
+        std::lock_guard<std::mutex> lock(input_queue_mutex_);
+        while (!input_queue_.empty()) {
+            input_queue_.pop();
+        }
+    }
+    
     void stop_playback() {
         std::lock_guard<std::mutex> lock(playback_mutex_);
         stop_playback_ = true;
@@ -621,6 +628,10 @@ bool AudioIO::play(const AudioBuffer& buffer) {
 
 bool AudioIO::is_playback_complete() const {
     return pimpl_->is_playback_complete();
+}
+
+void AudioIO::flush_input_queue() {
+    pimpl_->flush_input_queue();
 }
 
 void AudioIO::stop_playback() {

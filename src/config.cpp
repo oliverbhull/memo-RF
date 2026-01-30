@@ -42,6 +42,7 @@ Config Config::load_from_file(const std::string& path) {
         if (v.contains("min_speech_ms")) cfg.vad.min_speech_ms = v["min_speech_ms"];
         if (v.contains("hangover_ms")) cfg.vad.hangover_ms = v["hangover_ms"];
         if (v.contains("pause_tolerance_ms")) cfg.vad.pause_tolerance_ms = v["pause_tolerance_ms"];
+        if (v.contains("debug_log_rms_each_frame")) cfg.vad.debug_log_rms_each_frame = v["debug_log_rms_each_frame"];
     }
     
     // STT config
@@ -59,6 +60,7 @@ Config Config::load_from_file(const std::string& path) {
         if (l.contains("max_tokens")) cfg.llm.max_tokens = l["max_tokens"];
         if (l.contains("model_name")) cfg.llm.model_name = l["model_name"];
         if (l.contains("temperature")) cfg.llm.temperature = l["temperature"];
+        if (l.contains("system_prompt")) cfg.llm.system_prompt = l["system_prompt"];
         if (l.contains("stop_sequences") && l["stop_sequences"].is_array()) {
             cfg.llm.stop_sequences.clear();
             for (const auto& seq : l["stop_sequences"]) {
@@ -72,6 +74,7 @@ Config Config::load_from_file(const std::string& path) {
         auto& t = j["tts"];
         if (t.contains("voice_path")) cfg.tts.voice_path = t["voice_path"];
         if (t.contains("vox_preroll_ms")) cfg.tts.vox_preroll_ms = t["vox_preroll_ms"];
+        if (t.contains("vox_preroll_amplitude")) cfg.tts.vox_preroll_amplitude = t["vox_preroll_amplitude"];
         if (t.contains("output_gain")) cfg.tts.output_gain = t["output_gain"];
     }
     
@@ -79,6 +82,7 @@ Config Config::load_from_file(const std::string& path) {
     if (j.contains("tx")) {
         auto& tx = j["tx"];
         if (tx.contains("max_transmit_ms")) cfg.tx.max_transmit_ms = tx["max_transmit_ms"];
+        if (tx.contains("standby_delay_ms")) cfg.tx.standby_delay_ms = tx["standby_delay_ms"];
         if (tx.contains("enable_start_chirp")) cfg.tx.enable_start_chirp = tx["enable_start_chirp"];
         if (tx.contains("enable_end_chirp")) cfg.tx.enable_end_chirp = tx["enable_end_chirp"];
     }
@@ -118,6 +122,7 @@ void Config::save_to_file(const std::string& path) const {
     j["vad"]["min_speech_ms"] = vad.min_speech_ms;
     j["vad"]["hangover_ms"] = vad.hangover_ms;
     j["vad"]["pause_tolerance_ms"] = vad.pause_tolerance_ms;
+    j["vad"]["debug_log_rms_each_frame"] = vad.debug_log_rms_each_frame;
     
     j["stt"]["model_path"] = stt.model_path;
     j["stt"]["language"] = stt.language;
@@ -127,13 +132,16 @@ void Config::save_to_file(const std::string& path) const {
     j["llm"]["max_tokens"] = llm.max_tokens;
     j["llm"]["model_name"] = llm.model_name;
     j["llm"]["temperature"] = llm.temperature;
+    j["llm"]["system_prompt"] = llm.system_prompt;
     j["llm"]["stop_sequences"] = llm.stop_sequences;
     
     j["tts"]["voice_path"] = tts.voice_path;
     j["tts"]["vox_preroll_ms"] = tts.vox_preroll_ms;
+    j["tts"]["vox_preroll_amplitude"] = tts.vox_preroll_amplitude;
     j["tts"]["output_gain"] = tts.output_gain;
     
     j["tx"]["max_transmit_ms"] = tx.max_transmit_ms;
+    j["tx"]["standby_delay_ms"] = tx.standby_delay_ms;
     j["tx"]["enable_start_chirp"] = tx.enable_start_chirp;
     j["tx"]["enable_end_chirp"] = tx.enable_end_chirp;
     

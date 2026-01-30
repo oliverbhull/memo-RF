@@ -64,6 +64,21 @@ inline bool is_empty_or_whitespace(const std::string& str) {
     return str.find_first_not_of(" \t\n\r") == std::string::npos;
 }
 
+/**
+ * @brief Ensure transmission text ends with " over." (radio protocol)
+ * @param str Text that will be spoken over the air
+ * @return Copy of str, with " over." appended if it does not already end with "over" or "over."
+ */
+inline std::string ensure_ends_with_over(const std::string& str) {
+    std::string t = trim_copy(str);
+    if (t.empty()) return " over.";
+    std::string n = normalize_copy(t);
+    size_t len = n.size();
+    if (len >= 5 && n.compare(len - 5, 5, "over.") == 0) return str;
+    if (len >= 4 && n.compare(len - 4, 4, "over") == 0) return str;
+    return t + " over.";
+}
+
 } // namespace utils
 
 } // namespace memo_rf

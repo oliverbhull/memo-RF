@@ -60,6 +60,13 @@ public:
     bool is_playback_complete() const;
     
     /**
+     * @brief Flush the input queue (discard any accumulated frames).
+     * Call when transitioning to IdleListening so we do not process stale
+     * audio that accumulated while the main loop was blocked in STT/LLM/TTS.
+     */
+    void flush_input_queue();
+    
+    /**
      * @brief Stop playback immediately and clear queue
      */
     void stop_playback();

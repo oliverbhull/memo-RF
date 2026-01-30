@@ -60,6 +60,11 @@ public:
         request["temperature"] = config_.temperature;
         request["stop"] = json(config_.stop_sequences);
         request["stream"] = false;
+        // Anti-repetition settings
+        request["repeat_penalty"] = 1.3;
+        request["repeat_last_n"] = 64;
+        request["presence_penalty"] = 0.5;
+        request["frequency_penalty"] = 0.5;
         
         std::string request_json = request.dump();
         
@@ -194,7 +199,7 @@ private:
         // Add system message first (always, it should be first)
         json system_msg;
         system_msg["role"] = "system";
-        system_msg["content"] = "You are a helpful radio operator assistant. Answer the user's questions clearly and concisely. Keep responses brief and direct (1-2 sentences, under 20 words when possible).";
+        system_msg["content"] = config_.system_prompt;
         messages.push_back(system_msg);
         
         // Add conversation history (which should start with user message, then assistant/tool messages)
@@ -239,9 +244,17 @@ private:
         json request;
         request["model"] = config_.model_name;
         request["messages"] = messages;
-        request["temperature"] = config_.temperature;
         request["stream"] = false;
-        
+
+        // Ollama options (includes anti-repetition)
+        json options;
+        options["temperature"] = config_.temperature;
+        options["num_predict"] = config_.max_tokens;
+        options["repeat_penalty"] = 1.3;
+        options["repeat_last_n"] = 64;
+        options["top_p"] = 0.9;
+        request["options"] = options;
+
         // Add tools if provided
         if (!tool_definitions_json.empty()) {
             try {
@@ -385,10 +398,7 @@ private:
     
     std::string build_prompt(const std::string& prompt, const std::string& context) {
         std::ostringstream oss;
-        
-        // Simpler, less restrictive prompt for GPT-OSS
-        // GPT-OSS works better with less aggressive constraints
-        oss << "You are a helpful radio operator assistant. Answer the user's questions clearly and concisely. Keep responses brief and direct (1-2 sentences, under 20 words when possible). ";
+        oss << config_.system_prompt << " ";
         if (!context.empty()) {
             oss << "Context: " << context << " ";
         }
