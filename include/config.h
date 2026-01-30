@@ -36,6 +36,10 @@ struct LLMConfig {
     std::string system_prompt = "You are a helpful radio operator supporting field operators. "
                                "Use clear, concise comms. Be succinct: one short sentence, under 15 words when possible. "
                                "No preamble. Answer in standard radio procedure.";
+    /// When true (and USE_AGENTS_SDK), use manufacturing floor router (maintenance/production/safety/status) instead of single agent
+    bool use_manufacturing_router = false;
+    /// Optional path to agents-sdk .env; when set, Ollama uses OLLAMA_BASE_URL and MODEL from that file (matches SDK demos)
+    std::string agents_sdk_env_path;
 };
 
 struct TTSConfig {

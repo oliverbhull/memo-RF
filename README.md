@@ -70,6 +70,15 @@ cmake -DWHISPER_DIR=/path/to/whisper.cpp ..
 make
 ```
 
+**Optional – agents-sdk (RunEdgeAI):** Build with the [agents-sdk](https://github.com/RunEdgeAI/agents-sdk) for the LLM path (Ollama + ActorAgent). Requires C++20 and the SDK at `../agents-sdk` by default:
+```bash
+cd build
+cmake .. -DUSE_AGENTS_SDK=ON
+# Or: cmake .. -DUSE_AGENTS_SDK=ON -DAGENTS_SDK_DIR=/path/to/agents-sdk
+make
+```
+When `USE_AGENTS_SDK=ON`, tools (log_memo, internal_search, external_research) are not registered with the SDK due to ABI; use the default build if you need tools. With the SDK you can enable **manufacturing floor router** in config (`llm.use_manufacturing_router: true`) to route voice to maintenance/production/safety/status and get radio-friendly replies. See `docs/AGENTS_SDK.md` for details.
+
 ## Configuration
 
 1. Copy the example config:

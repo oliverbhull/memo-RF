@@ -67,6 +67,8 @@ Config Config::load_from_file(const std::string& path) {
                 cfg.llm.stop_sequences.push_back(seq.get<std::string>());
             }
         }
+        if (l.contains("use_manufacturing_router")) cfg.llm.use_manufacturing_router = l["use_manufacturing_router"].get<bool>();
+        if (l.contains("agents_sdk_env_path")) cfg.llm.agents_sdk_env_path = l["agents_sdk_env_path"].get<std::string>();
     }
     
     // TTS config
@@ -134,6 +136,8 @@ void Config::save_to_file(const std::string& path) const {
     j["llm"]["temperature"] = llm.temperature;
     j["llm"]["system_prompt"] = llm.system_prompt;
     j["llm"]["stop_sequences"] = llm.stop_sequences;
+    j["llm"]["use_manufacturing_router"] = llm.use_manufacturing_router;
+    if (!llm.agents_sdk_env_path.empty()) j["llm"]["agents_sdk_env_path"] = llm.agents_sdk_env_path;
     
     j["tts"]["voice_path"] = tts.voice_path;
     j["tts"]["vox_preroll_ms"] = tts.vox_preroll_ms;

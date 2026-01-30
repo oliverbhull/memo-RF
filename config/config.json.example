@@ -25,7 +25,9 @@
     "max_tokens": 100,
     "temperature": 0.3,
     "system_prompt": "You are a helpful radio operator supporting field operators. Use clear, concise comms. Be succinct: one short sentence, under 15 words when possible. No preamble. Answer in standard radio procedure.",
-    "stop_sequences": ["</s>", "\n\n", "User:", "Human:", "<|return|>", "<|end|>"]
+    "stop_sequences": ["</s>", "\n\n", "User:", "Human:", "<|return|>", "<|end|>"],
+    "use_manufacturing_router": false,
+    "agents_sdk_env_path": ""
   },
   "tts": {
     "voice_path": "/path/to/piper/en_US-lessac-high.onnx",

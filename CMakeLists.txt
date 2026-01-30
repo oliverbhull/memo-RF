@@ -1,7 +1,13 @@
 cmake_minimum_required(VERSION 3.15)
 project(memo-rf VERSION 1.0.0 LANGUAGES CXX)
 
-set(CMAKE_CXX_STANDARD 17)
+# Option: integrate RunEdgeAI agents-sdk for LLM + tools (requires C++20)
+option(USE_AGENTS_SDK "Use agents-sdk for agent/tools (C++20, link SDK)" OFF)
+if(USE_AGENTS_SDK)
+    set(CMAKE_CXX_STANDARD 20)
+else()
+    set(CMAKE_CXX_STANDARD 17)
+endif()
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
@@ -170,6 +176,26 @@ endif()
 message(STATUS "Found whisper.h at: ${WHISPER_INCLUDE_DIR}")
 message(STATUS "Found whisper library at: ${WHISPER_LIB}")
 
+# agents-sdk (optional)
+set(AGENTS_SDK_DIR "${CMAKE_SOURCE_DIR}/../agents-sdk" CACHE PATH "Path to agents-sdk (RunEdgeAI)")
+if(USE_AGENTS_SDK)
+    if(NOT EXISTS "${AGENTS_SDK_DIR}/include/agents-cpp/context.h")
+        message(FATAL_ERROR "USE_AGENTS_SDK=ON but agents-sdk not found at ${AGENTS_SDK_DIR}. Set -DAGENTS_SDK_DIR=/path/to/agents-sdk")
+    endif()
+    if(APPLE)
+        set(AGENTS_SDK_LIB "${AGENTS_SDK_DIR}/lib/macos/libagents_cpp_shared_lib.dylib")
+    elseif(UNIX AND NOT APPLE)
+        set(AGENTS_SDK_LIB "${AGENTS_SDK_DIR}/lib/linux/libagents_cpp_shared_lib.so")
+    else()
+        set(AGENTS_SDK_LIB "${AGENTS_SDK_DIR}/lib/windows/agents_cpp_shared_lib.dll")
+    endif()
+    if(NOT EXISTS "${AGENTS_SDK_LIB}")
+        message(FATAL_ERROR "agents-sdk library not found: ${AGENTS_SDK_LIB}")
+    endif()
+    message(STATUS "agents-sdk: ${AGENTS_SDK_DIR}")
+    add_compile_definitions(USE_AGENTS_SDK=1)
+endif()
+
 # Source files - Core (new architecture)
 set(CORE_SOURCES
     src/core/config.cpp
@@ -213,6 +239,9 @@ set(LEGACY_SOURCES
     src/tools/external_research_tool.cpp
     src/tools/internal_search_tool.cpp
 )
+if(USE_AGENTS_SDK)
+    list(APPEND LEGACY_SOURCES src/agents_sdk_bridge.cpp)
+endif()
 
 # All sources
 set(SOURCES
@@ -287,12 +316,19 @@ set(HEADERS
 add_executable(memo-rf ${SOURCES} ${HEADERS})
 
 # Link libraries
-target_link_libraries(memo-rf
-    ${PORTAUDIO_LIBRARIES}
-    ${WHISPER_LIB}
-    pthread
-    curl
-)
+set(MEMO_RF_LIBS ${PORTAUDIO_LIBRARIES} ${WHISPER_LIB} pthread curl)
+if(USE_AGENTS_SDK)
+    list(APPEND MEMO_RF_LIBS ${AGENTS_SDK_LIB})
+endif()
+target_link_libraries(memo-rf ${MEMO_RF_LIBS})
+if(USE_AGENTS_SDK)
+    target_include_directories(memo-rf PRIVATE ${AGENTS_SDK_DIR}/include)
+    get_filename_component(AGENTS_SDK_LIB_DIR ${AGENTS_SDK_LIB} DIRECTORY)
+    set_target_properties(memo-rf PROPERTIES BUILD_RPATH "${AGENTS_SDK_LIB_DIR}")
+    if(APPLE)
+        set_target_properties(memo-rf PROPERTIES INSTALL_RPATH "@loader_path")
+    endif()
+endif()
 
 # Add macOS frameworks for PortAudio (required on macOS)
 if(APPLE)

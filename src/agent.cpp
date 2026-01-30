@@ -16,6 +16,9 @@
 #include "tools/log_memo_tool.h"
 #include "tools/external_research_tool.h"
 #include "tools/internal_search_tool.h"
+#ifdef USE_AGENTS_SDK
+#include "agents_sdk_bridge.h"
+#endif
 #include <thread>
 #include <atomic>
 #include <chrono>
@@ -52,11 +55,20 @@ public:
         vad_ = std::make_unique<VADEndpointing>(config_.vad);
         stt_ = std::make_unique<STTEngine>(config_.stt);
         router_ = std::make_unique<Router>();
+#ifndef USE_AGENTS_SDK
         llm_ = std::make_unique<LLMClient>(config_.llm);
+#endif
         tts_ = std::make_unique<TTSEngine>(config_.tts);
         tx_ = std::make_unique<TXController>(config_.tx);
         state_machine_ = std::make_unique<StateMachine>();
         recorder_ = std::make_unique<SessionRecorder>(config_.session_log_dir);
+#ifdef USE_AGENTS_SDK
+        agents_bridge_ = std::make_unique<AgentsSdkBridge>();
+        if (!agents_bridge_->init(config_)) {
+            Logger::error("Failed to initialize agents-sdk bridge");
+            return false;
+        }
+#endif
         
         // Set up TX controller
         tx_->set_audio_io(audio_io_.get());
@@ -83,7 +95,8 @@ public:
         recorder_->start_session();
         Logger::info("Session recording started");
         
-        // Initialize tool system
+        // Initialize tool system (legacy path only; agents-sdk path registers tools in bridge)
+#ifndef USE_AGENTS_SDK
         Logger::info("Initializing tool system...");
         tool_registry_ = std::make_unique<ToolRegistry>();
         tool_executor_ = std::make_unique<ToolExecutor>(
@@ -107,6 +120,7 @@ public:
             }
         }
         Logger::info("Tool system initialized with " + std::to_string(tool_registry_->size()) + " tools");
+#endif
         
         initialized_ = true;
         return true;
@@ -419,7 +433,12 @@ private:
         auto llm_start = std::chrono::steady_clock::now();
         std::string llm_prompt = transcript.text;
         recorder_->record_llm_prompt(llm_prompt, utterance_id);
-        
+        std::string llm_response;
+
+#ifdef USE_AGENTS_SDK
+        LOG_LLM(std::string("Calling agents-sdk with prompt: \"") + llm_prompt + "\"");
+        llm_response = agents_bridge_->run(llm_prompt);
+#else
         // Get tool definitions for LLM (only if tools are enabled)
         std::string tool_definitions;
         if (tool_registry_ && tool_registry_->size() > 0) {
@@ -429,15 +448,11 @@ private:
         LOG_LLM(std::string("Calling LLM with prompt: \"") + llm_prompt + "\"");
         
         // Conversation history for multi-turn with tools
-        // Start with user message
         std::vector<std::string> conversation_history;
         json user_msg;
         user_msg["role"] = "user";
         user_msg["content"] = llm_prompt;
         conversation_history.push_back(user_msg.dump());
-        
-        // Main LLM loop with tool execution (only if tools are enabled)
-        std::string llm_response;
         
         if (tool_definitions.empty()) {
             // No tools enabled - use simple direct LLM call
@@ -451,12 +466,6 @@ private:
             llm_response = response.content;
         } else {
             // Tools enabled - use tool execution loop
-            std::vector<std::string> conversation_history;
-            json user_msg;
-            user_msg["role"] = "user";
-            user_msg["content"] = llm_prompt;
-            conversation_history.push_back(user_msg.dump());
-            
             int max_iterations = 5;  // Prevent infinite loops
             int iteration = 0;
             
@@ -495,7 +504,6 @@ private:
                     if (response.has_content()) {
                         llm_response = response.content;
                     } else {
-                        // Empty response, use fallback
                         llm_response = "Stand by.";
                     }
                     break;
@@ -503,8 +511,6 @@ private:
                 
                 // Execute tools
                 LOG_LLM("Tool calls detected: " + std::to_string(response.tool_calls.size()));
-                std::vector<ToolExecutionResult> tool_results;
-                
                 for (const auto& tool_call : response.tool_calls) {
                     ToolExecutionRequest call;
                     call.tool_name = tool_call.name;
@@ -513,27 +519,22 @@ private:
                     
                     LOG_LLM("Executing tool: " + call.tool_name);
                     
-                    // Execute synchronously for now (can be made async later)
                     auto result = tool_executor_->execute_sync(call, config_.tools.timeout_ms);
-                    tool_results.push_back(result);
                     
-                    // Add tool result to conversation
                     std::string result_msg = LLMClient::format_tool_result(
                         result.tool_call_id,
                         result.result.success ? result.result.content : ("Error: " + result.result.error)
                     );
                     conversation_history.push_back(result_msg);
                 }
-                
-                // Continue loop to get LLM response with tool results
             }
             
-            // If we hit max iterations, use last response or fallback
             if (iteration >= max_iterations && llm_response.empty()) {
                 LOG_LLM("Max tool execution iterations reached");
                 llm_response = "Stand by.";
             }
         }
+#endif
         
         auto llm_end = std::chrono::steady_clock::now();
         int64_t llm_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -620,9 +621,12 @@ private:
         std::unique_ptr<StateMachine> state_machine_;
         std::unique_ptr<SessionRecorder> recorder_;
         
-        // Tool system
+        // Tool system (legacy path)
         std::unique_ptr<ToolRegistry> tool_registry_;
         std::unique_ptr<ToolExecutor> tool_executor_;
+#ifdef USE_AGENTS_SDK
+        std::unique_ptr<AgentsSdkBridge> agents_bridge_;
+#endif
 };
 
 VoiceAgent::VoiceAgent(const Config& config)
