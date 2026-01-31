@@ -82,9 +82,20 @@ make
    - `tts.voice_path`: Path to your Piper voice model
    - `llm.endpoint`: LLM server endpoint (default: http://localhost:8080/completion)
    - Audio device names if not using "default"
+   - `wake_word.enabled`: When true (default), the agent responds only when the transcript contains "hey memo"; when false, it responds to every utterance (legacy).
+   - `tx.channel_clear_silence_ms`: Half-duplex: wait this many ms of silence after the last speech before keying up (default 500). See `docs/WAKE_WORD.md`.
 
 See `docs/INSTALL_MODELS.md` for detailed model installation instructions.
 See `docs/VOICE_CONFIG.md` for voice configuration options.
+See `docs/WAKE_WORD.md` for wake-word ("hey memo") and half-duplex channel-clear behavior.
+
+### Personas
+
+You can swap the agent’s role by name instead of editing the system prompt. Set `llm.agent_persona` in `config.json` to a persona id; the loader reads `personas.json` from the same directory as the config file and uses that persona’s system prompt (and optional display name for logs). If `agent_persona` is set, it overrides any inline `llm.system_prompt`.
+
+- **Persona library:** `config/personas.json` (or copy from `config/personas.json.example`). Each entry has `name` and `system_prompt`. Ids are simple strings: `manufacturing`, `security`, `warehouse`, etc. (not display names).
+- **Built-in ids (examples):** Business — `manufacturing`, `retail`, `hospitality`, `healthcare`, `security`, `warehouse`, `construction`, `film_production`, `ski_patrol`, `theme_park`, `airline_ramp`, `maritime`, `wildland_fire`, `school_admin`, `golf_course`. Demo — `ems_dispatch`, `pit_crew`, `mission_control`, `food_truck_rally`. Fun — `trucker_cb`, `submarine`, `detective_noir`, `drill_sergeant`, `butler`, `surfer`, `astronaut`, `ghost_hunters`, `zombie_survivor`, `sports_coach`, `wedding_planner`, `ranch_hand`, `asshole`. See `config/personas.json` for the full list.
+- **Example:** In `config.json`, set `"agent_persona": "manufacturing"` under `llm`. Omit `agent_persona` to use the inline `system_prompt` as before.
 
 ### Finding Audio Devices
 
@@ -114,9 +125,10 @@ See `docs/VOICE_CONFIG.md` for voice configuration options.
 ### Operation
 
 1. User speaks into radio (PTT on radio)
-2. Agent listens on computer audio input
-3. Agent responds over radio (VOX triggers transmit)
-4. All sessions are logged to `sessions/`
+2. Agent listens on computer audio input; all speech is transcribed (continual STT)
+3. When **wake word enabled** (default): the agent responds on the channel only when the transcript contains "hey memo"; otherwise it stays silent. Before keying up, it waits for the channel to be clear (`tx.channel_clear_silence_ms` of silence) so it does not talk over someone else (half-duplex).
+4. Agent responds over radio (VOX triggers transmit)
+5. All sessions are logged to `sessions/`
 
 ## Session Logging
 
@@ -183,6 +195,7 @@ Pre-configured fast responses (no LLM):
 
 Additional documentation is available in the `docs/` folder:
 - `ARCHITECTURE.md` - System architecture details
+- `WAKE_WORD.md` - Wake word ("hey memo"), continual STT, and half-duplex channel clear
 - `INSTALL_MODELS.md` - Model installation guide
 - `VOICE_CONFIG.md` - Voice configuration options
 - `QUICKSTART.md` - Quick start guide

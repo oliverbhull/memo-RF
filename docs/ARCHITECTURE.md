@@ -104,9 +104,11 @@ memo-RF/
 - Playback interruption support
 
 ### StateMachine
-- Four states: `IdleListening`, `ReceivingSpeech`, `Thinking`, `Transmitting`
-- Event-driven transitions
-- Transmission interruption logic
+- Five states: `IdleListening`, `ReceivingSpeech`, `Thinking`, `WaitingForChannelClear`, `Transmitting`
+- When **wake word enabled**: continual STT (every segment transcribed); respond only when transcript contains "hey memo"; response is stored and we enter `WaitingForChannelClear` until channel is clear (half-duplex), then transmit.
+- When **wake word disabled** (legacy): `ReceivingSpeech` → `Thinking` on SpeechEnd; `Thinking` → `Transmitting` on response ready; transmit immediately.
+- `WaitingForChannelClear`: response audio ready but we wait for `channel_clear_silence_ms` of silence after last SpeechEnd before keying up; if SpeechStart (someone else talking), we go to `ReceivingSpeech` and wait for them to finish, then re-check channel clear.
+- Transmission interruption logic (e.g. SpeechStart during Transmitting → ReceivingSpeech).
 
 ### SessionRecorder
 - WAV file recording (raw input, utterances, TTS output)
@@ -198,20 +200,35 @@ memo-RF/
 
 ## State Transitions
 
+**When wake word enabled** (continual STT; respond only on "hey memo"; half-duplex):
+
+- Every VAD segment is transcribed. If transcript does not contain "hey memo", no response (stay IdleListening).
+- If transcript contains "hey memo", strip it, use remainder as command, build response, then enter `WaitingForChannelClear` (do not key up yet). When channel has been silent for `tx.channel_clear_silence_ms`, transmit. If SpeechStart while waiting (someone else talking), go to ReceivingSpeech; on their SpeechEnd return to WaitingForChannelClear and reset the silence timer.
+
 ```
 IdleListening
     ↓ (SpeechStart)
  ReceivingSpeech
-    ↓ (SpeechEnd)
-Thinking
-    ↓ (Response ready)
+    ↓ (SpeechEnd) → STT; no "hey memo" → IdleListening
+    ↓ (SpeechEnd) → "hey memo" + command → build response → WaitingForChannelClear
+WaitingForChannelClear
+    ↓ (channel clear: silence >= channel_clear_silence_ms)
 Transmitting
     ↓ (Playback complete)
 IdleListening
 
-Transmitting
-    ↓ (SpeechStart detected)
-ReceivingSpeech (interrupt)
+WaitingForChannelClear
+    ↓ (SpeechStart, interrupt on channel)
+ReceivingSpeech
+    ↓ (SpeechEnd)
+WaitingForChannelClear
+```
+
+**When wake word disabled** (legacy):
+
+```
+IdleListening → ReceivingSpeech (SpeechStart) → Thinking (SpeechEnd) → Transmitting (response ready) → IdleListening (playback complete)
+Transmitting → ReceivingSpeech (SpeechStart, interrupt)
 ```
 
 ---

@@ -25,6 +25,7 @@
     "max_tokens": 100,
     "context_max_turns_to_send": 6,
     "temperature": 0.3,
+    "agent_persona": "manufacturing",
     "system_prompt": "You are a helpful radio operator supporting field operators. Use clear, concise comms. Be succinct: one short sentence, under 15 words when possible. No preamble. Answer in standard radio procedure.",
     "stop_sequences": ["</s>", "\n\n", "User:", "Human:", "<|return|>", "<|end|>"]
   },
@@ -47,8 +48,12 @@
   "tx": {
     "max_transmit_ms": 20000,
     "standby_delay_ms": 200,
+    "channel_clear_silence_ms": 500,
     "enable_start_chirp": false,
     "enable_end_chirp": false
+  },
+  "wake_word": {
+    "enabled": true
   },
   "tools": {
     "enabled": [],

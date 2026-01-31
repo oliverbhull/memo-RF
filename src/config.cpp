@@ -6,6 +6,49 @@
 
 using json = nlohmann::json;
 
+namespace {
+
+/// Resolve agent_persona from personas.json in the same directory as the config file.
+/// On success: sets cfg.llm.system_prompt and cfg.llm.persona_name. On failure: logs warning, leaves system_prompt unchanged.
+void resolve_persona(memo_rf::Config& cfg, const std::string& config_path) {
+    const std::string& id = cfg.llm.agent_persona;
+    if (id.empty()) return;
+
+    std::string config_dir;
+    std::string::size_type pos = config_path.find_last_of("/\\");
+    if (pos != std::string::npos) {
+        config_dir = config_path.substr(0, pos + 1);
+    }
+    std::string personas_path = config_dir + "personas.json";
+
+    std::ifstream pf(personas_path);
+    if (!pf.is_open()) {
+        memo_rf::Logger::warn("agent_persona \"" + id + "\" set but could not open " + personas_path + "; using existing system_prompt.");
+        return;
+    }
+    json personas_json;
+    try {
+        pf >> personas_json;
+    } catch (const json::exception& e) {
+        memo_rf::Logger::warn("agent_persona \"" + id + "\" set but failed to parse " + personas_path + ": " + e.what());
+        return;
+    }
+    if (!personas_json.contains(id) || !personas_json[id].is_object()) {
+        memo_rf::Logger::warn("agent_persona \"" + id + "\" not found in " + personas_path + "; using existing system_prompt.");
+        return;
+    }
+    const auto& persona = personas_json[id];
+    if (persona.contains("system_prompt") && persona["system_prompt"].is_string()) {
+        cfg.llm.system_prompt = persona["system_prompt"].get<std::string>();
+    }
+    if (persona.contains("name") && persona["name"].is_string()) {
+        cfg.llm.persona_name = persona["name"].get<std::string>();
+    }
+    memo_rf::Logger::info("Agent persona: " + (cfg.llm.persona_name.empty() ? id : cfg.llm.persona_name));
+}
+
+} // namespace
+
 namespace memo_rf {
 
 Config Config::load_from_file(const std::string& path) {
@@ -62,6 +105,9 @@ Config Config::load_from_file(const std::string& path) {
         if (l.contains("model_name")) cfg.llm.model_name = l["model_name"];
         if (l.contains("temperature")) cfg.llm.temperature = l["temperature"];
         if (l.contains("system_prompt")) cfg.llm.system_prompt = l["system_prompt"];
+        if (l.contains("agent_persona") && l["agent_persona"].is_string()) {
+            cfg.llm.agent_persona = l["agent_persona"].get<std::string>();
+        }
         if (l.contains("stop_sequences") && l["stop_sequences"].is_array()) {
             cfg.llm.stop_sequences.clear();
             for (const auto& seq : l["stop_sequences"]) {
@@ -84,8 +130,15 @@ Config Config::load_from_file(const std::string& path) {
         auto& tx = j["tx"];
         if (tx.contains("max_transmit_ms")) cfg.tx.max_transmit_ms = tx["max_transmit_ms"];
         if (tx.contains("standby_delay_ms")) cfg.tx.standby_delay_ms = tx["standby_delay_ms"];
+        if (tx.contains("channel_clear_silence_ms")) cfg.tx.channel_clear_silence_ms = tx["channel_clear_silence_ms"];
         if (tx.contains("enable_start_chirp")) cfg.tx.enable_start_chirp = tx["enable_start_chirp"];
         if (tx.contains("enable_end_chirp")) cfg.tx.enable_end_chirp = tx["enable_end_chirp"];
+    }
+
+    // Wake word config (respond only on "hey memo" when enabled)
+    if (j.contains("wake_word")) {
+        auto& w = j["wake_word"];
+        if (w.contains("enabled")) cfg.wake_word.enabled = w["enabled"];
     }
     
     // Tools config
@@ -107,7 +160,10 @@ Config Config::load_from_file(const std::string& path) {
     if (j.contains("session_log_dir")) cfg.session_log_dir = j["session_log_dir"];
     if (j.contains("enable_replay_mode")) cfg.enable_replay_mode = j["enable_replay_mode"];
     if (j.contains("replay_wav_path")) cfg.replay_wav_path = j["replay_wav_path"];
-    
+
+    // Resolve agent persona from library (persona wins over inline system_prompt)
+    resolve_persona(cfg, path);
+
     return cfg;
 }
 
@@ -134,7 +190,12 @@ void Config::save_to_file(const std::string& path) const {
     j["llm"]["context_max_turns_to_send"] = llm.context_max_turns_to_send;
     j["llm"]["model_name"] = llm.model_name;
     j["llm"]["temperature"] = llm.temperature;
-    j["llm"]["system_prompt"] = llm.system_prompt;
+    if (!llm.agent_persona.empty()) {
+        j["llm"]["agent_persona"] = llm.agent_persona;
+        // When using a persona, system_prompt is derived from personas.json at load time; do not persist it
+    } else {
+        j["llm"]["system_prompt"] = llm.system_prompt;
+    }
     j["llm"]["stop_sequences"] = llm.stop_sequences;
     
     j["tts"]["voice_path"] = tts.voice_path;
@@ -144,8 +205,11 @@ void Config::save_to_file(const std::string& path) const {
     
     j["tx"]["max_transmit_ms"] = tx.max_transmit_ms;
     j["tx"]["standby_delay_ms"] = tx.standby_delay_ms;
+    j["tx"]["channel_clear_silence_ms"] = tx.channel_clear_silence_ms;
     j["tx"]["enable_start_chirp"] = tx.enable_start_chirp;
     j["tx"]["enable_end_chirp"] = tx.enable_end_chirp;
+
+    j["wake_word"]["enabled"] = wake_word.enabled;
     
     j["tools"]["enabled"] = tools.enabled;
     j["tools"]["timeout_ms"] = tools.timeout_ms;

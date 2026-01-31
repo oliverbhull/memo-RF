@@ -212,6 +212,7 @@ set(LEGACY_SOURCES
     src/tools/log_memo_tool.cpp
     src/tools/external_research_tool.cpp
     src/tools/internal_search_tool.cpp
+    src/twitter_flow.cpp
 )
 
 # All sources
@@ -272,6 +273,7 @@ set(LEGACY_HEADERS
     include/tools/log_memo_tool.h
     include/tools/external_research_tool.h
     include/tools/internal_search_tool.h
+    include/twitter_flow.h
 )
 
 # All headers

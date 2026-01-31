@@ -19,6 +19,7 @@
 #include "tools/log_memo_tool.h"
 #include "tools/external_research_tool.h"
 #include "tools/internal_search_tool.h"
+#include "twitter_flow.h"
 #include <thread>
 #include <atomic>
 #include <chrono>
@@ -41,7 +42,8 @@ public:
           previous_state_(State::IdleListening),
           speech_frame_count_(0),
           speech_start_time_(std::chrono::steady_clock::now()),
-          last_speech_log_time_(std::chrono::steady_clock::now()) {}
+          last_speech_log_time_(std::chrono::steady_clock::now()),
+          last_speech_end_time_(std::chrono::steady_clock::now()) {}
     
     ~Impl() {
         shutdown();
@@ -60,7 +62,7 @@ public:
         llm_ = std::make_unique<LLMClient>(config_.llm);
         tts_ = std::make_unique<TTSEngine>(config_.tts);
         tx_ = std::make_unique<TXController>(config_.tx);
-        state_machine_ = std::make_unique<StateMachine>();
+        state_machine_ = std::make_unique<StateMachine>(config_.wake_word.enabled);
         recorder_ = std::make_unique<SessionRecorder>(config_.session_log_dir);
         
         // Set up TX controller
@@ -137,6 +139,11 @@ public:
         }
         
         Logger::info("=== Memo-RF Voice Agent Started ===");
+        if (!config_.llm.persona_name.empty()) {
+            Logger::info("Agent persona: " + config_.llm.persona_name);
+        } else if (!config_.llm.agent_persona.empty()) {
+            Logger::info("Agent persona: " + config_.llm.agent_persona);
+        }
         Logger::info("Listening for speech...");
         
         // State tracking
@@ -245,13 +252,26 @@ private:
         
         // CRITICAL: Never process VAD during transmission or thinking
         // This is the primary defense against feedback loops
+        // We do process VAD in WaitingForChannelClear so we can detect SpeechStart (interrupt on channel)
         if (current_state == State::Transmitting || current_state == State::Thinking) {
-            // Skip all VAD processing during these states
             return;
         }
+
+        // When WaitingForChannelClear: check if channel is clear; if so, transmit pending response
+        if (current_state == State::WaitingForChannelClear && !pending_response_audio_.empty()) {
+            auto now = std::chrono::steady_clock::now();
+            auto silence_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                now - last_speech_end_time_).count();
+            if (silence_ms >= config_.tx.channel_clear_silence_ms) {
+                state_machine_->on_channel_clear();
+                vad_->reset();
+                tx_->transmit(pending_response_audio_);
+                pending_response_audio_.clear();
+                return;
+            }
+        }
         
-        // Check guard period when in IdleListening
-        // Must wait before re-enabling VAD after transmission
+        // Check guard period when in IdleListening (not when WaitingForChannelClear)
         if (current_state == State::IdleListening) {
             auto now = std::chrono::steady_clock::now();
             auto elapsed_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -264,10 +284,11 @@ private:
             }
         }
         
-        // Process VAD only when in IdleListening (past guard period) or ReceivingSpeech
+        // Process VAD when in IdleListening (past guard period), ReceivingSpeech, or WaitingForChannelClear (to detect interrupt)
         VADEvent vad_event = VADEvent::None;
         if (current_state == State::IdleListening || 
-            current_state == State::ReceivingSpeech) {
+            current_state == State::ReceivingSpeech ||
+            current_state == State::WaitingForChannelClear) {
             vad_event = vad_->process(frame);
             
             // Debug VAD events
@@ -326,24 +347,92 @@ private:
     
     void handle_speech_end(AudioBuffer& current_utterance, Transcript& current_transcript,
                           Plan& current_plan, AudioBuffer& response_audio, int& utterance_id) {
+        last_speech_end_time_ = std::chrono::steady_clock::now();
+
+        // Half-duplex: we were waiting for channel clear and someone was talking; now they stopped
+        if (!pending_response_audio_.empty()) {
+            state_machine_->on_vad_event(VADEvent::SpeechEnd);
+            return;
+        }
+
         state_machine_->on_vad_event(VADEvent::SpeechEnd);
         current_utterance = vad_->finalize_segment();
-        
-        // Check if we have enough speech
+
         size_t min_samples = (config_.vad.min_speech_ms * config_.audio.sample_rate) / 1000;
         if (current_utterance.size() < min_samples) {
             return;
         }
-        
+
         utterance_id++;
-        
-        // Immediate acknowledgment before processing: "Standby, over"
-        // Brief delay after user speech ends so channel settles and "Standby, over" is heard clearly.
+
+        // Continual STT: always transcribe
+        recorder_->record_utterance(current_utterance, utterance_id);
+        int duration_ms = (current_utterance.size() * 1000) / config_.audio.sample_rate;
+        recorder_->record_event("speech_end", "duration_ms=" + std::to_string(duration_ms));
+
+        auto transcribe_start = std::chrono::steady_clock::now();
+        current_transcript = stt_->transcribe(current_utterance);
+        auto transcribe_end = std::chrono::steady_clock::now();
+        int64_t transcribe_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+            transcribe_end - transcribe_start).count();
+        std::ostringstream oss;
+        oss << "(" << transcribe_ms << "ms) " << current_transcript.text;
+        LOG_STT(oss.str());
+        recorder_->record_transcript(current_transcript, utterance_id);
+
+        // Wake word: respond only when transcript contains "hey memo"
+        if (config_.wake_word.enabled) {
+            std::string lower = utils::normalize_copy(current_transcript.text);
+            const std::string wake_phrase = "hey memo";
+            if (lower.find(wake_phrase) == std::string::npos) {
+                return;  // No response; agent stays silent
+            }
+            // Strip "hey memo" (case-insensitive) and use remainder as command
+            std::string text = current_transcript.text;
+            size_t pos = lower.find(wake_phrase);
+            text = (pos + wake_phrase.size() < text.size())
+                ? text.substr(pos + wake_phrase.size()) : "";
+            current_transcript.text = utils::trim_copy(text);
+            if (current_transcript.text.empty()) {
+                current_transcript.text = " ";  // Avoid empty prompt
+            }
+            bool twitter_handled_ww = false;
+            {
+                auto tf_result = twitter_flow_handle(current_transcript.text, twitter_flow_state_);
+                if (tf_result.handled) {
+                    current_plan.type = PlanType::Speak;
+                    current_plan.answer_text = tf_result.response_text;
+                    current_plan.needs_llm = false;
+                    twitter_handled_ww = true;
+                    LOG_ROUTER(std::string("Twitter flow - speaking: \"") + tf_result.response_text + "\"");
+                }
+            }
+            if (!twitter_handled_ww) {
+                LOG_ROUTER(std::string("Deciding on plan for: \"") + current_transcript.text + "\"");
+                current_plan = router_->decide(current_transcript.text);
+            }
+            state_machine_->on_transcript_ready(current_transcript);
+            vad_->reset();
+            execute_plan(current_plan, current_transcript, response_audio, utterance_id, true);
+            if (response_audio.empty()) {
+                return;
+            }
+            const std::string standby = "Standby, over";
+            AudioBuffer preroll = tts_->get_preroll_buffer();
+            AudioBuffer standby_speech = tts_->synth(standby);
+            pending_response_audio_.clear();
+            pending_response_audio_.reserve(preroll.size() + standby_speech.size() + response_audio.size());
+            pending_response_audio_.insert(pending_response_audio_.end(), preroll.begin(), preroll.end());
+            pending_response_audio_.insert(pending_response_audio_.end(), standby_speech.begin(), standby_speech.end());
+            pending_response_audio_.insert(pending_response_audio_.end(), response_audio.begin(), response_audio.end());
+            state_machine_->on_response_ready(pending_response_audio_);
+            return;
+        }
+
+        // Legacy: respond to every utterance; send standby immediately then process
         if (config_.tx.standby_delay_ms > 0) {
             std::this_thread::sleep_for(std::chrono::milliseconds(config_.tx.standby_delay_ms));
         }
-        // Do not wait for playback; start STT/LLM so response overlaps standby.
-        // Explicitly prepend VOX tone so radio opens before first word.
         {
             vad_->reset();
             const std::string standby = "Standby, over";
@@ -355,94 +444,79 @@ private:
             standby_audio.insert(standby_audio.end(), standby_speech.begin(), standby_speech.end());
             tx_->transmit(standby_audio);
         }
-        
-        // Record utterance
-        recorder_->record_utterance(current_utterance, utterance_id);
-        int duration_ms = (current_utterance.size() * 1000) / config_.audio.sample_rate;
-        recorder_->record_event("speech_end", "duration_ms=" + std::to_string(duration_ms));
-        
-        // Transcribe
-        auto transcribe_start = std::chrono::steady_clock::now();
-        current_transcript = stt_->transcribe(current_utterance);
-        auto transcribe_end = std::chrono::steady_clock::now();
-        
-        int64_t transcribe_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
-            transcribe_end - transcribe_start).count();
-        
-        std::ostringstream oss;
-        oss << "(" << transcribe_ms << "ms) " << current_transcript.text;
-        LOG_STT(oss.str());
-        
-        recorder_->record_transcript(current_transcript, utterance_id);
-        
-        // Decide on plan
-        LOG_ROUTER(std::string("Deciding on plan for: \"") + current_transcript.text + "\"");
-        current_plan = router_->decide(current_transcript.text);
+
+        bool twitter_handled = false;
+        {
+            auto tf_result = twitter_flow_handle(current_transcript.text, twitter_flow_state_);
+            if (tf_result.handled) {
+                current_plan.type = PlanType::Speak;
+                current_plan.answer_text = tf_result.response_text;
+                current_plan.needs_llm = false;
+                twitter_handled = true;
+                LOG_ROUTER(std::string("Twitter flow - speaking: \"") + tf_result.response_text + "\"");
+            }
+        }
+        if (!twitter_handled) {
+            LOG_ROUTER(std::string("Deciding on plan for: \"") + current_transcript.text + "\"");
+            current_plan = router_->decide(current_transcript.text);
+        }
         std::ostringstream plan_oss;
-        plan_oss << "Plan type: " << (int)current_plan.type 
+        plan_oss << "Plan type: " << (int)current_plan.type
                  << ", needs_llm: " << current_plan.needs_llm;
         LOG_ROUTER(plan_oss.str());
         state_machine_->on_transcript_ready(current_transcript);
-        
-        // Execute plan
-        execute_plan(current_plan, current_transcript, response_audio, utterance_id);
+        execute_plan(current_plan, current_transcript, response_audio, utterance_id, false);
     }
     
     void execute_plan(const Plan& plan, const Transcript& transcript,
-                     AudioBuffer& response_audio, int utterance_id) {
+                     AudioBuffer& response_audio, int utterance_id, bool wait_for_channel_clear = false) {
         if (plan.type == PlanType::NoOp) {
             LOG_ROUTER("NoOp - doing nothing");
             return;
         }
-        
         if (plan.type == PlanType::Speak) {
-            execute_fast_path(plan, response_audio, utterance_id);
+            execute_fast_path(plan, response_audio, utterance_id, wait_for_channel_clear);
         } else if (plan.type == PlanType::SpeakAckThenAnswer) {
-            execute_llm_path(plan, transcript, response_audio, utterance_id);
+            execute_llm_path(plan, transcript, response_audio, utterance_id, wait_for_channel_clear);
         } else if (plan.type == PlanType::Fallback) {
-            execute_fallback(plan, response_audio, utterance_id);
+            execute_fallback(plan, response_audio, utterance_id, wait_for_channel_clear);
         }
     }
     
-    void execute_fast_path(const Plan& plan, AudioBuffer& response_audio, int utterance_id) {
+    void execute_fast_path(const Plan& plan, AudioBuffer& response_audio, int utterance_id,
+                           bool wait_for_channel_clear = false) {
         std::string text = utils::ensure_ends_with_over(plan.answer_text);
         LOG_ROUTER(std::string("Fast path - speaking: \"") + text + "\"");
         response_audio = tts_->synth_vox(text);
         recorder_->record_tts_output(response_audio, utterance_id);
+        if (wait_for_channel_clear) {
+            return;  // Caller will store as pending and call on_response_ready after channel clear
+        }
         state_machine_->on_response_ready(response_audio);
-        // Reset VAD before transmitting to prevent detecting our own voice
         vad_->reset();
         tx_->transmit(response_audio);
-        // Guard period will be set when playback completes in process_frame
     }
     
     void execute_llm_path(const Plan& plan, const Transcript& transcript,
-                         AudioBuffer& response_audio, int utterance_id) {
-        // Skip acknowledgment if ack_text is empty (just beep via VOX pre-roll)
-        if (!plan.ack_text.empty()) {
+                         AudioBuffer& response_audio, int utterance_id,
+                         bool wait_for_channel_clear = false) {
+        // When waiting for channel clear, skip ack transmit (we will send standby+response when clear)
+        if (!wait_for_channel_clear && !plan.ack_text.empty()) {
             std::string ack_text = utils::ensure_ends_with_over(plan.ack_text);
             LOG_ROUTER(std::string("LLM path - acknowledging first: \"") + ack_text + "\"");
-            
-            // Reset VAD before transmitting ack to prevent detecting our own voice
             vad_->reset();
-            
-            // Acknowledge first
             AudioBuffer ack_audio = tts_->synth_vox(ack_text);
             tx_->transmit(ack_audio);
-            
-            // Wait for ack to complete
             LOG_ROUTER("Waiting for ack playback to complete...");
             while (!audio_io_->is_playback_complete() && running_) {
                 std::this_thread::sleep_for(std::chrono::milliseconds(10));
             }
             LOG_ROUTER("Ack playback complete, calling LLM...");
-            
-            // Mark ack end time for guard period (prevent detecting ack in VAD)
             transmission_end_time_ = std::chrono::steady_clock::now();
-        } else {
+        } else if (!wait_for_channel_clear) {
             LOG_ROUTER("LLM path - skipping acknowledgment, going straight to response");
         }
-        
+
         // Generate LLM response with tool support
         auto llm_start = std::chrono::steady_clock::now();
         std::string raw_prompt = transcript.text;
@@ -607,15 +681,21 @@ private:
         LOG_TTS("Synthesizing response...");
         response_audio = tts_->synth_vox(response_text);
         recorder_->record_tts_output(response_audio, utterance_id);
+        if (wait_for_channel_clear) {
+            if (session_memory_->message_count() >= 4) {
+                std::vector<std::string> snapshot = session_memory_->to_json_strings();
+                {
+                    std::lock_guard<std::mutex> lock(job_mutex_);
+                    pending_snapshot_ = std::move(snapshot);
+                }
+                job_cv_.notify_one();
+            }
+            return;
+        }
         state_machine_->on_response_ready(response_audio);
-        
-        // Reset VAD before transmitting to prevent detecting our own voice
         vad_->reset();
-        
         LOG_TX("Transmitting response (" + std::to_string(response_audio.size()) + " samples)...");
         tx_->transmit(response_audio);
-
-        // Kick off background summarization (non-blocking) when we have enough history
         if (session_memory_->message_count() >= 4) {
             std::vector<std::string> snapshot = session_memory_->to_json_strings();
             {
@@ -625,19 +705,17 @@ private:
             job_cv_.notify_one();
         }
     }
-    
-    void execute_fallback(const Plan& plan, AudioBuffer& response_audio, int utterance_id) {
+
+    void execute_fallback(const Plan& plan, AudioBuffer& response_audio, int utterance_id,
+                         bool wait_for_channel_clear = false) {
         std::string text = utils::ensure_ends_with_over(plan.fallback_text);
         LOG_ROUTER(std::string("Fallback - speaking: \"") + text + "\"");
         response_audio = tts_->synth_vox(text);
         recorder_->record_tts_output(response_audio, utterance_id);
+        if (wait_for_channel_clear) return;
         state_machine_->on_response_ready(response_audio);
-        
-        // Reset VAD before transmitting to prevent detecting our own voice
         vad_->reset();
-        
         tx_->transmit(response_audio);
-        // Guard period will be set when playback completes in process_frame
     }
     
     void cleanup() {
@@ -696,6 +774,9 @@ private:
     std::atomic<bool> running_;
     bool initialized_;
     
+    // Twitter flow state (regex-driven draft-tweet flow when persona is "twitter")
+    TwitterFlowState twitter_flow_state_ = TwitterFlowState::Idle;
+    
     // Track transmission end time for guard period
     std::chrono::steady_clock::time_point transmission_end_time_;
     
@@ -705,9 +786,13 @@ private:
     // Track speech frame count for logging
     int speech_frame_count_;
     
-    // Track speech timing for periodic logging
+        // Track speech timing for periodic logging
     std::chrono::steady_clock::time_point speech_start_time_;
     std::chrono::steady_clock::time_point last_speech_log_time_;
+
+    // Half-duplex: channel clear before TX
+    std::chrono::steady_clock::time_point last_speech_end_time_;
+    AudioBuffer pending_response_audio_;
     
     std::unique_ptr<AudioIO> audio_io_;
     std::unique_ptr<VADEndpointing> vad_;

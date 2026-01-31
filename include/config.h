@@ -34,6 +34,10 @@ struct LLMConfig {
     std::string model_name = "qwen";
     float temperature = 0.7f;
     std::vector<std::string> stop_sequences = {"</s>", "\n\n", "User:", "Human:"};
+    /// If set, system_prompt is resolved from config/personas.json; persona wins over inline system_prompt
+    std::string agent_persona;
+    /// Display name from persona (set when agent_persona is resolved); used for logging
+    std::string persona_name;
     std::string system_prompt = "You are a helpful radio operator supporting field operators. "
                                "Use clear, concise comms. Be succinct: one short sentence, under 15 words when possible. "
                                "No preamble. Answer in standard radio procedure.";
@@ -46,9 +50,14 @@ struct TTSConfig {
     float output_gain = 1.0f;
 };
 
+struct WakeWordConfig {
+    bool enabled = true;  ///< When true, respond only when transcript contains "hey memo"; when false, legacy (respond to every utterance)
+};
+
 struct TXConfig {
     int max_transmit_ms = 20000;  // Maximum transmission time in ms (0 = no limit)
     int standby_delay_ms = 200;   // Delay after user speech ends before sending "Standby, over" (ms)
+    int channel_clear_silence_ms = 500;  ///< Half-duplex: wait this long after last SpeechEnd before keying up (ms)
     bool enable_start_chirp = false;
     bool enable_end_chirp = false;
 };
@@ -67,6 +76,7 @@ struct Config {
     TTSConfig tts;
     TXConfig tx;
     ToolsConfig tools;
+    WakeWordConfig wake_word;
     
     std::string session_log_dir = "sessions";
     bool enable_replay_mode = false;
