@@ -76,6 +76,7 @@ public:
         
         // Get result
         int n_segments = whisper_full_n_segments(ctx_);
+        int total_tokens = 0;
         if (n_segments > 0) {
             std::string text;
             float total_prob = 0.0f;
@@ -85,6 +86,7 @@ public:
                 text += seg_text;
                 
                 int n_tokens = whisper_full_n_tokens(ctx_, i);
+                total_tokens += n_tokens;
                 for (int j = 0; j < n_tokens; j++) {
                     float prob = whisper_full_get_token_p(ctx_, i, j);
                     total_prob += prob;
@@ -92,13 +94,8 @@ public:
             }
             
             result.text = text;
-            if (n_segments > 0) {
-                int total_tokens = 0;
-                for (int i = 0; i < n_segments; i++) {
-                    total_tokens += whisper_full_n_tokens(ctx_, i);
-                }
-                result.confidence = total_tokens > 0 ? (total_prob / total_tokens) : 0.0f;
-            }
+            result.confidence = total_tokens > 0 ? (total_prob / total_tokens) : 0.0f;
+            result.token_count = total_tokens;
         }
         
         auto end = std::chrono::steady_clock::now();

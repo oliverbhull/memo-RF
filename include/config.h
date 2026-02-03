@@ -24,6 +24,38 @@ struct VADConfig {
 struct STTConfig {
     std::string model_path;
     std::string language = "en";
+    std::string blank_sentinel = "[BLANK_AUDIO]";  ///< Treat this exact string (after trim) as blank
+};
+
+/// Transcript gate: block router/clarifier/memory when transcript is low-signal
+struct TranscriptGateConfig {
+    int min_transcript_chars = 1;     ///< Minimum character count (after trim)
+    int min_transcript_tokens = 1;    ///< Minimum token count from STT
+    float min_confidence = 0.0f;      ///< Minimum confidence (0 = disabled)
+};
+
+/// Behavior when transcript is blank or fails gate
+struct TranscriptBlankBehaviorConfig {
+    std::string behavior = "none";           ///< "none" | "say_again" | "beep"
+    std::string say_again_phrase = "Say again, over";
+};
+
+/// Context resolver (clarifier) guards: never run on empty/low-signal
+struct ClarifierConfig {
+    int min_chars = 1;
+    float min_confidence = 0.0f;
+    std::string unknown_sentinel = "__UNKNOWN__";  ///< Treat as no-op for main LLM
+};
+
+/// Router: repair plan when confidence is low
+struct RouterConfig {
+    float repair_confidence_threshold = 0.0f;  ///< Below this: return repair plan (0 = disabled)
+    std::string repair_phrase = "Say again, over";
+};
+
+/// LLM: fallback when response was truncated (done_reason == length)
+struct LLMTruncationConfig {
+    std::string fallback_phrase = "Stand by.";
 };
 
 struct LLMConfig {
@@ -36,15 +68,22 @@ struct LLMConfig {
     std::vector<std::string> stop_sequences = {"</s>", "\n\n", "User:", "Human:"};
     /// If set, system_prompt is resolved from config/personas.json; persona wins over inline system_prompt
     std::string agent_persona;
+    /// When set (e.g. "es", "fr", "de"), agent responds in that language; persona unchanged. TTS voice resolved from language_voices.json.
+    std::string response_language;
     /// Display name from persona (set when agent_persona is resolved); used for logging
     std::string persona_name;
     std::string system_prompt = "You are a helpful radio operator supporting field operators. "
                                "Use clear, concise comms. Be succinct: one short sentence, under 15 words when possible. "
                                "No preamble. Answer in standard radio procedure.";
+    LLMTruncationConfig truncation;  ///< Fallback when done_reason == length
 };
 
 struct TTSConfig {
     std::string voice_path;
+    /// Base dir for Piper voice models when resolving by response_language (empty = ~/models/piper)
+    std::string voice_models_dir;
+    std::string piper_path;         ///< Piper binary path (empty = auto-detect)
+    std::string espeak_data_path;  ///< espeak-ng data dir (empty = platform default)
     int vox_preroll_ms = 350;       ///< Tone duration before speech so VOX opens (ms)
     float vox_preroll_amplitude = 0.55f;  ///< Tone amplitude 0–1 so VOX reliably triggers
     float output_gain = 1.0f;
@@ -72,6 +111,10 @@ struct Config {
     AudioConfig audio;
     VADConfig vad;
     STTConfig stt;
+    TranscriptGateConfig transcript_gate;
+    TranscriptBlankBehaviorConfig transcript_blank_behavior;
+    ClarifierConfig clarifier;
+    RouterConfig router;
     LLMConfig llm;
     TTSConfig tts;
     TXConfig tx;

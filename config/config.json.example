@@ -15,8 +15,27 @@
     "debug_log_rms_each_frame": false
   },
   "stt": {
-    "model_path": "/path/to/whisper/ggml-small.en-q5_1.bin",
-    "language": "en"
+    "model_path": "~/models/whisper/ggml-small.en-q5_1.bin",
+    "language": "en",
+    "blank_sentinel": "[BLANK_AUDIO]"
+  },
+  "transcript_gate": {
+    "min_transcript_chars": 1,
+    "min_transcript_tokens": 1,
+    "min_confidence": 0.0
+  },
+  "transcript_blank_behavior": {
+    "behavior": "none",
+    "say_again_phrase": "Say again, over"
+  },
+  "clarifier": {
+    "min_chars": 1,
+    "min_confidence": 0.0,
+    "unknown_sentinel": "__UNKNOWN__"
+  },
+  "router": {
+    "repair_confidence_threshold": 0.0,
+    "repair_phrase": "Say again, over"
   },
   "llm": {
     "endpoint": "http://localhost:11434/api/chat",
@@ -26,13 +45,18 @@
     "context_max_turns_to_send": 6,
     "temperature": 0.3,
     "agent_persona": "manufacturing",
+    "response_language": "",
     "system_prompt": "You are a helpful radio operator supporting field operators. Use clear, concise comms. Be succinct: one short sentence, under 15 words when possible. No preamble. Answer in standard radio procedure.",
-    "stop_sequences": ["</s>", "\n\n", "User:", "Human:", "<|return|>", "<|end|>"]
+    "stop_sequences": ["</s>", "\n\n", "User:", "Human:", "<|return|>", "<|end|>"],
+    "truncation": {
+      "fallback_phrase": "Stand by."
+    }
   },
   "tts": {
-    "voice_path": "/path/to/piper/en_US-lessac-high.onnx",
-    "espeak_data_path": "/opt/homebrew/share/espeak-ng-data",
+    "voice_path": "~/models/piper/en_US-lessac-medium.onnx",
+    "voice_models_dir": "",
     "piper_path": "",
+    "espeak_data_path": "",
     "vox_preroll_ms": 350,
     "vox_preroll_amplitude": 0.55,
     "output_gain": 1.0,

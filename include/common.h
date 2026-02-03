@@ -50,6 +50,7 @@ struct Transcript {
     std::string text;
     float confidence;
     int64_t processing_ms;
+    int token_count = 0;  ///< Number of tokens from STT (0 if not set)
 };
 
 } // namespace memo_rf

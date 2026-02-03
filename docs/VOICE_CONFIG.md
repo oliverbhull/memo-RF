@@ -65,6 +65,22 @@ After downloading, update the `voice_path` in `config.json`:
 
 For radio use, **medium** is recommended for good balance of quality and speed.
 
+### Response language (any persona in Spanish, French, German)
+
+You can have any persona respond in a specific language by setting `llm.response_language` in `config.json` (e.g. `"es"`, `"fr"`, `"de"`). The agent will follow the persona’s style but answer only in that language, and the Piper voice is chosen automatically from `config/language_voices.json` under the base directory given by `tts.voice_models_dir` (default `~/models/piper`).
+
+1. Set `llm.response_language` to the desired code (`es`, `fr`, or `de`).
+2. Optionally set `tts.voice_models_dir` if your Piper voice models are elsewhere (e.g. `~/models/piper`).
+3. Ensure the matching voice files exist. To download the Spanish, French, and German voices:
+
+```bash
+./scripts/download_translate_voices.sh
+```
+
+This fetches into `~/models/piper/` (or `$MEMO_RF_PIPER_MODELS`). The paths in `config/language_voices.json` point to these models. You can add more languages by editing `language_voices.json` (copy from `config/language_voices.json.example`).
+
+**Example:** `"agent_persona": "asshole"` with `"response_language": "fr"` gives an asshole persona that responds in French, using the French Piper voice automatically.
+
 ## Voice Parameters
 
 - **vox_preroll_ms**: Duration of beep/tone before speech (default: 200ms)

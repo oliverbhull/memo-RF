@@ -1,7 +1,9 @@
 #include "config.h"
 #include "logger.h"
+#include "path_utils.h"
 #include <fstream>
 #include <sstream>
+#include <unordered_map>
 #include <nlohmann/json.hpp>
 
 using json = nlohmann::json;
@@ -45,6 +47,57 @@ void resolve_persona(memo_rf::Config& cfg, const std::string& config_path) {
         cfg.llm.persona_name = persona["name"].get<std::string>();
     }
     memo_rf::Logger::info("Agent persona: " + (cfg.llm.persona_name.empty() ? id : cfg.llm.persona_name));
+}
+
+/// Apply response_language: append language instruction to system_prompt and set voice_path from language_voices.json.
+/// Call after resolve_persona(), before path expansion.
+void apply_response_language(memo_rf::Config& cfg, const std::string& config_path) {
+    const std::string& code = cfg.llm.response_language;
+    if (code.empty()) return;
+
+    static const std::unordered_map<std::string, std::string> code_to_name = {
+        {"es", "Spanish"},
+        {"fr", "French"},
+        {"de", "German"},
+    };
+    auto it = code_to_name.find(code);
+    std::string language_name = (it != code_to_name.end()) ? it->second : code;
+
+    cfg.llm.system_prompt += " Always respond in " + language_name + ". No other language.";
+    memo_rf::Logger::info("Response language: " + language_name);
+
+    std::string config_dir;
+    std::string::size_type pos = config_path.find_last_of("/\\");
+    if (pos != std::string::npos) {
+        config_dir = config_path.substr(0, pos + 1);
+    }
+    std::string voices_path = config_dir + "language_voices.json";
+
+    std::ifstream vf(voices_path);
+    if (!vf.is_open()) {
+        memo_rf::Logger::warn("response_language \"" + code + "\" set but could not open " + voices_path + "; voice_path unchanged.");
+        return;
+    }
+    json voices_json;
+    try {
+        vf >> voices_json;
+    } catch (const json::exception& e) {
+        memo_rf::Logger::warn("response_language \"" + code + "\" set but failed to parse " + voices_path + ": " + e.what());
+        return;
+    }
+    if (!voices_json.contains(code) || !voices_json[code].is_string()) {
+        memo_rf::Logger::warn("response_language \"" + code + "\" not found in " + voices_path + "; voice_path unchanged.");
+        return;
+    }
+    std::string rel = voices_json[code].get<std::string>();
+    while (!rel.empty() && (rel[0] == '/' || rel[0] == '\\')) {
+        rel.erase(0, 1);
+    }
+    std::string base = memo_rf::expand_path(cfg.tts.voice_models_dir.empty() ? "~/models/piper" : cfg.tts.voice_models_dir);
+    if (!base.empty() && base.back() != '/' && base.back() != '\\') {
+        base += "/";
+    }
+    cfg.tts.voice_path = base + rel;
 }
 
 } // namespace
@@ -93,6 +146,37 @@ Config Config::load_from_file(const std::string& path) {
         auto& s = j["stt"];
         if (s.contains("model_path")) cfg.stt.model_path = s["model_path"];
         if (s.contains("language")) cfg.stt.language = s["language"];
+        if (s.contains("blank_sentinel")) cfg.stt.blank_sentinel = s["blank_sentinel"];
+    }
+    
+    // Transcript gate config
+    if (j.contains("transcript_gate")) {
+        auto& g = j["transcript_gate"];
+        if (g.contains("min_transcript_chars")) cfg.transcript_gate.min_transcript_chars = g["min_transcript_chars"];
+        if (g.contains("min_transcript_tokens")) cfg.transcript_gate.min_transcript_tokens = g["min_transcript_tokens"];
+        if (g.contains("min_confidence")) cfg.transcript_gate.min_confidence = g["min_confidence"];
+    }
+    
+    // Transcript blank behavior
+    if (j.contains("transcript_blank_behavior")) {
+        auto& b = j["transcript_blank_behavior"];
+        if (b.contains("behavior")) cfg.transcript_blank_behavior.behavior = b["behavior"];
+        if (b.contains("say_again_phrase")) cfg.transcript_blank_behavior.say_again_phrase = b["say_again_phrase"];
+    }
+    
+    // Clarifier config
+    if (j.contains("clarifier")) {
+        auto& c = j["clarifier"];
+        if (c.contains("min_chars")) cfg.clarifier.min_chars = c["min_chars"];
+        if (c.contains("min_confidence")) cfg.clarifier.min_confidence = c["min_confidence"];
+        if (c.contains("unknown_sentinel")) cfg.clarifier.unknown_sentinel = c["unknown_sentinel"];
+    }
+    
+    // Router (repair) config
+    if (j.contains("router")) {
+        auto& r = j["router"];
+        if (r.contains("repair_confidence_threshold")) cfg.router.repair_confidence_threshold = r["repair_confidence_threshold"];
+        if (r.contains("repair_phrase")) cfg.router.repair_phrase = r["repair_phrase"];
     }
     
     // LLM config
@@ -108,11 +192,18 @@ Config Config::load_from_file(const std::string& path) {
         if (l.contains("agent_persona") && l["agent_persona"].is_string()) {
             cfg.llm.agent_persona = l["agent_persona"].get<std::string>();
         }
+        if (l.contains("response_language") && l["response_language"].is_string()) {
+            cfg.llm.response_language = l["response_language"].get<std::string>();
+        }
         if (l.contains("stop_sequences") && l["stop_sequences"].is_array()) {
             cfg.llm.stop_sequences.clear();
             for (const auto& seq : l["stop_sequences"]) {
                 cfg.llm.stop_sequences.push_back(seq.get<std::string>());
             }
+        }
+        if (l.contains("truncation") && l["truncation"].is_object()) {
+            auto& tr = l["truncation"];
+            if (tr.contains("fallback_phrase")) cfg.llm.truncation.fallback_phrase = tr["fallback_phrase"];
         }
     }
     
@@ -120,6 +211,9 @@ Config Config::load_from_file(const std::string& path) {
     if (j.contains("tts")) {
         auto& t = j["tts"];
         if (t.contains("voice_path")) cfg.tts.voice_path = t["voice_path"];
+        if (t.contains("voice_models_dir")) cfg.tts.voice_models_dir = t["voice_models_dir"];
+        if (t.contains("piper_path")) cfg.tts.piper_path = t["piper_path"];
+        if (t.contains("espeak_data_path")) cfg.tts.espeak_data_path = t["espeak_data_path"];
         if (t.contains("vox_preroll_ms")) cfg.tts.vox_preroll_ms = t["vox_preroll_ms"];
         if (t.contains("vox_preroll_amplitude")) cfg.tts.vox_preroll_amplitude = t["vox_preroll_amplitude"];
         if (t.contains("output_gain")) cfg.tts.output_gain = t["output_gain"];
@@ -164,6 +258,21 @@ Config Config::load_from_file(const std::string& path) {
     // Resolve agent persona from library (persona wins over inline system_prompt)
     resolve_persona(cfg, path);
 
+    // Apply response_language: append language to system_prompt, set voice_path from language_voices.json
+    apply_response_language(cfg, path);
+
+    // Path expansion: ~ to $HOME for model and binary paths
+    if (!cfg.stt.model_path.empty())
+        cfg.stt.model_path = expand_path(cfg.stt.model_path);
+    if (!cfg.tts.voice_path.empty())
+        cfg.tts.voice_path = expand_path(cfg.tts.voice_path);
+    if (!cfg.tts.piper_path.empty())
+        cfg.tts.piper_path = expand_path(cfg.tts.piper_path);
+    if (cfg.tts.espeak_data_path.empty())
+        cfg.tts.espeak_data_path = default_espeak_data_path();
+    else
+        cfg.tts.espeak_data_path = expand_path(cfg.tts.espeak_data_path);
+
     return cfg;
 }
 
@@ -183,6 +292,21 @@ void Config::save_to_file(const std::string& path) const {
     
     j["stt"]["model_path"] = stt.model_path;
     j["stt"]["language"] = stt.language;
+    j["stt"]["blank_sentinel"] = stt.blank_sentinel;
+    
+    j["transcript_gate"]["min_transcript_chars"] = transcript_gate.min_transcript_chars;
+    j["transcript_gate"]["min_transcript_tokens"] = transcript_gate.min_transcript_tokens;
+    j["transcript_gate"]["min_confidence"] = transcript_gate.min_confidence;
+    
+    j["transcript_blank_behavior"]["behavior"] = transcript_blank_behavior.behavior;
+    j["transcript_blank_behavior"]["say_again_phrase"] = transcript_blank_behavior.say_again_phrase;
+    
+    j["clarifier"]["min_chars"] = clarifier.min_chars;
+    j["clarifier"]["min_confidence"] = clarifier.min_confidence;
+    j["clarifier"]["unknown_sentinel"] = clarifier.unknown_sentinel;
+    
+    j["router"]["repair_confidence_threshold"] = router.repair_confidence_threshold;
+    j["router"]["repair_phrase"] = router.repair_phrase;
     
     j["llm"]["endpoint"] = llm.endpoint;
     j["llm"]["timeout_ms"] = llm.timeout_ms;
@@ -196,9 +320,18 @@ void Config::save_to_file(const std::string& path) const {
     } else {
         j["llm"]["system_prompt"] = llm.system_prompt;
     }
+    if (!llm.response_language.empty()) {
+        j["llm"]["response_language"] = llm.response_language;
+    }
     j["llm"]["stop_sequences"] = llm.stop_sequences;
+    j["llm"]["truncation"]["fallback_phrase"] = llm.truncation.fallback_phrase;
     
     j["tts"]["voice_path"] = tts.voice_path;
+    if (!tts.voice_models_dir.empty()) {
+        j["tts"]["voice_models_dir"] = tts.voice_models_dir;
+    }
+    j["tts"]["piper_path"] = tts.piper_path;
+    j["tts"]["espeak_data_path"] = tts.espeak_data_path;
     j["tts"]["vox_preroll_ms"] = tts.vox_preroll_ms;
     j["tts"]["vox_preroll_amplitude"] = tts.vox_preroll_amplitude;
     j["tts"]["output_gain"] = tts.output_gain;

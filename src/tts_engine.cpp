@@ -1,5 +1,6 @@
 #include "tts_engine.h"
 #include "logger.h"
+#include "path_utils.h"
 #include <fstream>
 #include <cmath>
 #include <cstring>
@@ -108,12 +109,28 @@ public:
 
 private:
     void find_piper_path() {
-        // Try common locations
-        std::vector<std::string> possible_paths = {
-            "/Users/oliverhull/dev/piper/build/piper",
-            "/usr/local/bin/piper",
-            "/opt/homebrew/bin/piper"
-        };
+        // Config first: if piper_path is set and exists, use it
+        if (!config_.piper_path.empty()) {
+            std::ifstream test(config_.piper_path);
+            if (test.good()) {
+                piper_path_ = config_.piper_path;
+                LOG_TTS("Using config piper path: " + piper_path_);
+                return;
+            }
+        }
+
+        // Platform-agnostic search list ($HOME/bin, $HOME/.local/bin, /usr/local/bin, /usr/bin; macOS: /opt/homebrew/bin)
+        std::vector<std::string> possible_paths;
+        const char* home = std::getenv("HOME");
+        if (home) {
+            possible_paths.push_back(std::string(home) + "/bin/piper");
+            possible_paths.push_back(std::string(home) + "/.local/bin/piper");
+        }
+        possible_paths.push_back("/usr/local/bin/piper");
+        possible_paths.push_back("/usr/bin/piper");
+#ifdef __APPLE__
+        possible_paths.push_back("/opt/homebrew/bin/piper");
+#endif
 
         for (const auto& path : possible_paths) {
             std::ifstream test(path);
@@ -186,9 +203,10 @@ private:
 
             // Execute piper with --json-input for persistent mode
             // Output raw audio to stdout
+            std::string espeak = config_.espeak_data_path.empty() ? default_espeak_data_path() : config_.espeak_data_path;
             execl(piper_path_.c_str(), "piper",
                   "--model", config_.voice_path.c_str(),
-                  "--espeak_data", "/opt/homebrew/share/espeak-ng-data",
+                  "--espeak_data", espeak.c_str(),
                   "--json-input",
                   "--output_raw",
                   "--quiet",
@@ -350,9 +368,10 @@ private:
 
         std::string escaped_text = escape_shell(text);
 
+        std::string espeak = config_.espeak_data_path.empty() ? default_espeak_data_path() : config_.espeak_data_path;
         std::string cmd = "echo \"" + escaped_text + "\" | " + piper_path_ +
                         " --model " + config_.voice_path +
-                        " --espeak_data /opt/homebrew/share/espeak-ng-data" +
+                        " --espeak_data " + espeak +
                         " --output_file " + temp_wav + " 2>/dev/null";
 
         int ret = system(cmd.c_str());

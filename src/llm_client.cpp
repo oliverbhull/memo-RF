@@ -1,5 +1,6 @@
 #include "llm_client.h"
 #include "logger.h"
+#include "utils.h"
 #include <curl/curl.h>
 #include <sstream>
 #include <thread>
@@ -48,8 +49,11 @@ public:
 
     std::string clarify_user_message(const std::string& raw_user_message,
                                      const std::vector<std::string>& conversation_history,
-                                     int timeout_ms) {
+                                     int timeout_ms, int min_chars) {
         if (timeout_ms == 0) timeout_ms = config_.timeout_ms;
+        // Never run on empty/low-signal: min chars check
+        if (min_chars > 0 && static_cast<int>(utils::trim_copy(raw_user_message).size()) < min_chars)
+            return raw_user_message;
         // Need at least one prior exchange (user + assistant) to clarify
         if (conversation_history.size() < 2) return raw_user_message;
         if (!is_ollama_) return raw_user_message;
@@ -72,7 +76,8 @@ public:
             "You are a context resolver. Given the conversation so far and the latest user message "
             "below (which may contain speech recognition errors), output only the single clarified "
             "user message that the user most likely intended. Resolve pronouns and references "
-            "(e.g. 'that' -> the topic just discussed). One line. No explanation, no preamble, no quotation marks.";
+            "(e.g. 'that' -> the topic just discussed). One line. No explanation, no preamble, no quotation marks. "
+            "If the latest user message is empty or unintelligible, output exactly __UNKNOWN__.";
 
         LLMResponse r = generate_ollama_chat("", "", clarifier_history, timeout_ms, 80, CLARIFIER_SYSTEM);
         std::string clarified = r.content;
@@ -367,6 +372,9 @@ private:
                     LOG_LLM(std::string("Ollama response: ") + response_buffer);
                     
                     // Parse response
+                    if (response_json.contains("done_reason") && response_json["done_reason"].is_string()) {
+                        response.stop_reason = response_json["done_reason"].get<std::string>();
+                    }
                     if (response_json.contains("message")) {
                         json message = response_json["message"];
                         
@@ -603,8 +611,8 @@ LLMResponse LLMClient::generate_with_tools(const std::string& prompt,
 
 std::string LLMClient::clarify_user_message(const std::string& raw_user_message,
                                             const std::vector<std::string>& conversation_history,
-                                            int timeout_ms) {
-    return pimpl_->clarify_user_message(raw_user_message, conversation_history, timeout_ms);
+                                            int timeout_ms, int min_chars) {
+    return pimpl_->clarify_user_message(raw_user_message, conversation_history, timeout_ms, min_chars);
 }
 
 std::string LLMClient::summarize_conversation(const std::string& conversation_text, int timeout_ms) {

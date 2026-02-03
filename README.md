@@ -28,7 +28,9 @@ Single C++ binary with modular components:
   - The build should create `libwhisper.a` or `libwhisper.dylib` in the whisper.cpp directory
 - **nlohmann/json** (header-only library)
 - **libcurl** (for LLM HTTP client)
-- **Piper** TTS (external binary, must be in PATH)
+- **Piper** TTS (external binary; set `tts.piper_path` in config or ensure in PATH)
+
+All model and binary paths are configurable via `config.json`; paths support `~` expansion (resolved at load time). Optional env: `MEMO_RF_LLM_MODEL`, `MEMO_RF_LLAMA_DIR` / `LLAMA_CPP_DIR` for scripts.
 
 #### Installing nlohmann/json
 
@@ -70,6 +72,19 @@ cmake -DWHISPER_DIR=/path/to/whisper.cpp ..
 make
 ```
 
+### Linux / Jetson Orin Nano
+
+On Ubuntu or Jetson (aarch64):
+
+1. Install system deps: `sudo apt-get install -y build-essential libportaudio2 libcurl4-openssl-dev pkg-config`
+2. Install nlohmann/json: `sudo apt-get install -y nlohmann-json3-dev` or place `json.hpp` in `third_party/nlohmann/`
+3. Build whisper.cpp for your platform (optionally with CUDA on Jetson): `cd whisper.cpp && make`
+4. Build memo-RF: `./build.sh` or `mkdir build && cd build && cmake -DWHISPER_DIR=/path/to/whisper.cpp .. && make`
+5. Install Piper (see `docs/INSTALL_MODELS.md`); set `tts.voice_path` and optionally `tts.piper_path` / `tts.espeak_data_path` in config
+6. Copy `config/config.json.example` to `config/config.json` and set `stt.model_path`, `tts.voice_path`, `llm.endpoint`
+
+See `docs/JETSON_SETUP.md` for a concise Jetson setup and transfer steps.
+
 ## Configuration
 
 1. Copy the example config:
@@ -78,8 +93,10 @@ make
    ```
 
 2. Edit `config/config.json` and update:
-   - `stt.model_path`: Path to your Whisper model
-   - `tts.voice_path`: Path to your Piper voice model
+   - `stt.model_path`: Path to your Whisper model (e.g. `~/models/whisper/ggml-small.en-q5_1.bin`; `~` is expanded at load)
+   - `tts.voice_path`: Path to your Piper voice model (e.g. `~/models/piper/en_US-lessac-medium.onnx`)
+   - `tts.piper_path`: Optional; Piper binary path (empty = auto-detect). Set on Linux/Jetson if piper is not in PATH.
+   - `tts.espeak_data_path`: Optional; espeak-ng data dir (empty = platform default: `/usr/share/espeak-ng-data` on Linux, `/opt/homebrew/share/espeak-ng-data` on macOS)
    - `llm.endpoint`: LLM server endpoint (default: http://localhost:8080/completion)
    - Audio device names if not using "default"
    - `wake_word.enabled`: When true (default), the agent responds only when the transcript contains "hey memo"; when false, it responds to every utterance (legacy).
@@ -96,6 +113,7 @@ You can swap the agent’s role by name instead of editing the system prompt. Se
 - **Persona library:** `config/personas.json` (or copy from `config/personas.json.example`). Each entry has `name` and `system_prompt`. Ids are simple strings: `manufacturing`, `security`, `warehouse`, etc. (not display names).
 - **Built-in ids (examples):** Business — `manufacturing`, `retail`, `hospitality`, `healthcare`, `security`, `warehouse`, `construction`, `film_production`, `ski_patrol`, `theme_park`, `airline_ramp`, `maritime`, `wildland_fire`, `school_admin`, `golf_course`. Demo — `ems_dispatch`, `pit_crew`, `mission_control`, `food_truck_rally`. Fun — `trucker_cb`, `submarine`, `detective_noir`, `drill_sergeant`, `butler`, `surfer`, `astronaut`, `ghost_hunters`, `zombie_survivor`, `sports_coach`, `wedding_planner`, `ranch_hand`, `asshole`. See `config/personas.json` for the full list.
 - **Example:** In `config.json`, set `"agent_persona": "manufacturing"` under `llm`. Omit `agent_persona` to use the inline `system_prompt` as before.
+- **Response language:** Set `llm.response_language` to `"es"`, `"fr"`, or `"de"` to have any persona respond in that language; the Piper voice is chosen automatically from `config/language_voices.json`. See `docs/VOICE_CONFIG.md`.
 
 ### Finding Audio Devices
 
@@ -187,9 +205,9 @@ Pre-configured fast responses (no LLM):
 - Check network connectivity
 
 ### Piper not found
-- Install piper: https://github.com/rhasspy/piper
-- Ensure `piper` binary is in PATH
-- Verify voice model path in config
+- Install piper: https://github.com/rhasspy/piper or run `./scripts/install_piper.sh`
+- Set `tts.piper_path` in config to the full path to the piper binary, or ensure `piper` is in PATH
+- Verify `tts.voice_path` in config
 
 ## Documentation
 
@@ -199,6 +217,7 @@ Additional documentation is available in the `docs/` folder:
 - `INSTALL_MODELS.md` - Model installation guide
 - `VOICE_CONFIG.md` - Voice configuration options
 - `QUICKSTART.md` - Quick start guide
+- `JETSON_SETUP.md` - Linux / Jetson Orin Nano setup and transfer
 - `NEXT_STEPS.md` - Future development plans
 - `RUNNING.md` - Running with agentic tools (Ollama, tools.enabled, troubleshooting)
 

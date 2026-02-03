@@ -89,5 +89,6 @@ private:
 #define LOG_LLM(msg) memo_rf::Logger::info(std::string("[LLM] ") + (msg))
 #define LOG_TTS(msg) memo_rf::Logger::info(std::string("[TTS] ") + (msg))
 #define LOG_TX(msg) memo_rf::Logger::info(std::string("[TX] ") + (msg))
+#define LOG_TRACE(utterance_id, stage, data) memo_rf::Logger::info(std::string("[trace] utterance_id=") + std::to_string(utterance_id) + " stage=" + (stage) + " " + (data))
 
 } // namespace memo_rf

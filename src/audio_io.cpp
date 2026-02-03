@@ -9,6 +9,8 @@
 #include <sstream>
 #include <algorithm>
 #include <cctype>
+#include <chrono>
+#include <thread>
 
 namespace memo_rf {
 
@@ -310,6 +312,17 @@ public:
     }
     
     bool play(const AudioBuffer& buffer) {
+        // Wait for current playback to finish so we never cut off (max 30s)
+        const int max_wait_ms = 30000;
+        int waited_ms = 0;
+        while (!is_playback_complete() && waited_ms < max_wait_ms) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+            waited_ms += 10;
+        }
+        if (waited_ms >= max_wait_ms) {
+            Logger::warn("[AudioIO] Play: timed out waiting for previous playback, replacing anyway");
+        }
+
         std::lock_guard<std::mutex> lock(playback_mutex_);
         stop_playback_ = false;
         playback_complete_ = false;

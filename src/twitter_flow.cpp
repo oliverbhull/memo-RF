@@ -8,6 +8,8 @@
 #include <cstdlib>
 #include <cstdio>
 #include <unistd.h>
+#else
+#include <cstdlib>
 #endif
 
 namespace memo_rf {
@@ -166,8 +168,19 @@ TwitterFlowResult twitter_flow_handle(const std::string& transcript,
         break;
     }
 #else
-    (void)state;
-    (void)normalized;
+    // Linux stub: open x.com in default browser when user asks to open twitter/new tweet
+    if (state == TwitterFlowState::Idle && matches_open_twitter_draft(normalized)) {
+        int ret = std::system("xdg-open \"https://x.com\" 2>/dev/null");
+        if (ret == 0) {
+            result.handled = true;
+            result.response_text = "Opened x.com in browser. Twitter flow not fully supported on Linux.";
+        } else {
+            Logger::warn("Twitter flow: xdg-open not available or failed; Twitter flow not fully supported on Linux.");
+            result.handled = true;
+            result.response_text = "Twitter flow not fully supported on Linux.";
+        }
+        state = TwitterFlowState::Idle;
+    }
     (void)transcript;
 #endif
 

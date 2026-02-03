@@ -67,16 +67,23 @@ case $choice in
         mkdir -p "$INSTALL_DIR"
         cd "$INSTALL_DIR"
         
-        # Detect architecture
+        # Detect OS and architecture
+        OS=$(uname -s)
         ARCH=$(uname -m)
-        if [ "$ARCH" = "arm64" ]; then
-            ARCH="arm64"
-        else
-            ARCH="amd64"
-        fi
-        
+        case "$ARCH" in
+            arm64|aarch64) ARCH="arm64" ;;
+            x86_64|amd64)  ARCH="amd64" ;;
+            *)             ARCH="amd64" ;;
+        esac
+        case "$OS" in
+            Darwin)  TARBALL="piper_macos_${ARCH}.tar.gz" ;;
+            Linux)   TARBALL="piper_linux_${ARCH}.tar.gz" ;;
+            *)
+                echo "Pre-built binary not available for $OS. Use option 1 (build from source)."
+                exit 1
+                ;;
+        esac
         VERSION="1.2.0"
-        TARBALL="piper_macos_${ARCH}.tar.gz"
         URL="https://github.com/rhasspy/piper/releases/download/v${VERSION}/${TARBALL}"
         
         echo "Downloading from: $URL"

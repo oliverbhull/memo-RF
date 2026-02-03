@@ -10,6 +10,7 @@
 #include "session_recorder.h"
 #include "logger.h"
 #include "utils.h"
+#include "transcript_gate.h"
 #include "common.h"
 #include "tool_registry.h"
 #include "tool_executor.h"
@@ -178,6 +179,24 @@ public:
             // Detect state transitions for guard period timing
             State current_state = state_machine_->get_state();
             
+            // Echo probe: log RMS 1-3 s after TX end to measure whether we capture our own TTS in the mic
+            if (current_state == State::IdleListening && (frame_count % 50) == 0) {
+                auto now = std::chrono::steady_clock::now();
+                int64_t elapsed_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                    now - transmission_end_time_).count();
+                if (elapsed_ms >= 1000 && elapsed_ms <= 3000) {
+                    float sum_sq = 0.0f;
+                    for (auto s : frame) {
+                        float normalized = static_cast<float>(s) / 32768.0f;
+                        sum_sq += normalized * normalized;
+                    }
+                    float rms = frame.empty() ? 0.0f : std::sqrt(sum_sq / frame.size());
+                    std::ostringstream eoss;
+                    eoss << "[echo_probe] post_tx_ms=" << elapsed_ms << " rms=" << rms;
+                    LOG_AUDIO(eoss.str());
+                }
+            }
+            
             // Check if playback completed while in Transmitting state
             // This must be checked every frame to catch the transition
             if (current_state == State::Transmitting) {
@@ -344,6 +363,32 @@ private:
         }
         state_machine_->on_vad_event(VADEvent::SpeechStart);
     }
+
+    void handle_blank_behavior() {
+        const std::string& behavior = config_.transcript_blank_behavior.behavior;
+        if (behavior == "none") {
+            LOG_ROUTER("Transcript blank/low-signal - re-listening");
+            vad_->reset();
+            return;
+        }
+        if (behavior == "say_again") {
+            std::string phrase = utils::ensure_ends_with_over(config_.transcript_blank_behavior.say_again_phrase);
+            AudioBuffer audio = tts_->synth_vox(phrase);
+            state_machine_->on_response_ready(audio);
+            vad_->reset();
+            tx_->transmit(audio);
+            return;
+        }
+        if (behavior == "beep") {
+            AudioBuffer beep = tts_->get_preroll_buffer();
+            state_machine_->on_response_ready(beep);
+            vad_->reset();
+            tx_->transmit(beep);
+            return;
+        }
+        LOG_ROUTER("Transcript blank/low-signal - re-listening (unknown behavior: " + behavior + ")");
+        vad_->reset();
+    }
     
     void handle_speech_end(AudioBuffer& current_utterance, Transcript& current_transcript,
                           Plan& current_plan, AudioBuffer& response_audio, int& utterance_id) {
@@ -369,6 +414,20 @@ private:
         recorder_->record_utterance(current_utterance, utterance_id);
         int duration_ms = (current_utterance.size() * 1000) / config_.audio.sample_rate;
         recorder_->record_event("speech_end", "duration_ms=" + std::to_string(duration_ms));
+        float avg_energy = 0.0f;
+        if (!current_utterance.empty()) {
+            float sum_sq = 0.0f;
+            for (auto s : current_utterance) {
+                float n = static_cast<float>(s) / 32768.0f;
+                sum_sq += n * n;
+            }
+            avg_energy = std::sqrt(sum_sq / current_utterance.size());
+        }
+        {
+            std::ostringstream toss;
+            toss << "duration_ms=" << duration_ms << " avg_energy=" << avg_energy;
+            LOG_TRACE(utterance_id, "vad_end", toss.str());
+        }
 
         auto transcribe_start = std::chrono::steady_clock::now();
         current_transcript = stt_->transcribe(current_utterance);
@@ -379,6 +438,27 @@ private:
         oss << "(" << transcribe_ms << "ms) " << current_transcript.text;
         LOG_STT(oss.str());
         recorder_->record_transcript(current_transcript, utterance_id);
+        {
+            std::string text_snippet = current_transcript.text.size() > 40
+                ? current_transcript.text.substr(0, 37) + "..."
+                : current_transcript.text;
+            std::ostringstream toss;
+            toss << "text=\"" << text_snippet << "\" token_count=" << current_transcript.token_count
+                 << " confidence=" << current_transcript.confidence;
+            LOG_TRACE(utterance_id, "stt", toss.str());
+        }
+
+        // Transcript gate: block router, clarifier, memory when low-signal
+        bool gate_passed = !is_low_signal_transcript(current_transcript, config_.transcript_gate, config_.stt.blank_sentinel);
+        {
+            std::ostringstream toss;
+            toss << (gate_passed ? "passed" : "failed reason=low_signal");
+            LOG_TRACE(utterance_id, "gate", toss.str());
+        }
+        if (!gate_passed) {
+            handle_blank_behavior();
+            return;
+        }
 
         // Wake word: respond only when transcript contains "hey memo"
         if (config_.wake_word.enabled) {
@@ -393,8 +473,10 @@ private:
             text = (pos + wake_phrase.size() < text.size())
                 ? text.substr(pos + wake_phrase.size()) : "";
             current_transcript.text = utils::trim_copy(text);
-            if (current_transcript.text.empty()) {
-                current_transcript.text = " ";  // Avoid empty prompt
+            // Remainder blank: do not send space to LLM; run blank behavior and return
+            if (utils::is_blank_transcript(current_transcript.text, config_.stt.blank_sentinel)) {
+                handle_blank_behavior();
+                return;
             }
             bool twitter_handled_ww = false;
             {
@@ -409,7 +491,12 @@ private:
             }
             if (!twitter_handled_ww) {
                 LOG_ROUTER(std::string("Deciding on plan for: \"") + current_transcript.text + "\"");
-                current_plan = router_->decide(current_transcript.text);
+                current_plan = router_->decide(current_transcript, "", config_.router.repair_confidence_threshold, config_.router.repair_phrase);
+            }
+            {
+                std::ostringstream toss;
+                toss << "plan_type=" << static_cast<int>(current_plan.type);
+                LOG_TRACE(utterance_id, "router", toss.str());
             }
             state_machine_->on_transcript_ready(current_transcript);
             vad_->reset();
@@ -458,7 +545,12 @@ private:
         }
         if (!twitter_handled) {
             LOG_ROUTER(std::string("Deciding on plan for: \"") + current_transcript.text + "\"");
-            current_plan = router_->decide(current_transcript.text);
+            current_plan = router_->decide(current_transcript, "", config_.router.repair_confidence_threshold, config_.router.repair_phrase);
+        }
+        {
+            std::ostringstream toss;
+            toss << "plan_type=" << static_cast<int>(current_plan.type);
+            LOG_TRACE(utterance_id, "router", toss.str());
         }
         std::ostringstream plan_oss;
         plan_oss << "Plan type: " << (int)current_plan.type
@@ -538,14 +630,38 @@ private:
         
         // Contextual clarification: when we have prior turns, resolve references and STT errors
         // so the main LLM sees what the user likely meant (e.g. "that fan" -> "that frequency").
+        // Never run clarifier on empty/low-signal input.
         std::string llm_prompt = raw_prompt;
-        if (session_memory_->message_count() >= 2) {
+        bool skip_clarifier = utils::is_blank_transcript(raw_prompt, config_.stt.blank_sentinel)
+            || static_cast<int>(utils::trim_copy(raw_prompt).size()) < config_.clarifier.min_chars
+            || transcript.confidence < config_.clarifier.min_confidence;
+        if (session_memory_->message_count() >= 2 && !skip_clarifier) {
             std::string clarified = llm_->clarify_user_message(raw_prompt, session_history,
-                                                              config_.llm.timeout_ms);
+                                                              config_.llm.timeout_ms,
+                                                              config_.clarifier.min_chars);
+            {
+                std::ostringstream toss;
+                toss << "ran output=\"" << (clarified.size() > 30 ? clarified.substr(0, 27) + "..." : clarified) << "\"";
+                LOG_TRACE(utterance_id, "clarifier", toss.str());
+            }
             if (!clarified.empty() && clarified != raw_prompt) {
+                std::string clarified_trimmed = utils::trim_copy(clarified);
+                if (clarified_trimmed == config_.clarifier.unknown_sentinel) {
+                    // Resolver said unknown: do not call main LLM; speak fallback and return without adding to memory
+                    std::string fallback = utils::ensure_ends_with_over(config_.llm.truncation.fallback_phrase);
+                    response_audio = tts_->synth_vox(fallback);
+                    recorder_->record_tts_output(response_audio, utterance_id);
+                    if (wait_for_channel_clear) return;
+                    state_machine_->on_response_ready(response_audio);
+                    vad_->reset();
+                    tx_->transmit(response_audio);
+                    return;
+                }
                 LOG_LLM(std::string("Context clarified: \"") + raw_prompt + "\" -> \"" + clarified + "\"");
                 llm_prompt = clarified;
             }
+        } else if (session_memory_->message_count() >= 2 && skip_clarifier) {
+            LOG_TRACE(utterance_id, "clarifier", "skipped");
         }
         
         // Get tool definitions for LLM (only if tools are enabled)
@@ -558,6 +674,7 @@ private:
         
         // Main LLM loop with tool execution (only if tools are enabled)
         std::string llm_response;
+        std::string llm_stop_reason;
         
         if (tool_definitions.empty()) {
             // No tools enabled - use simple direct LLM call with session history
@@ -568,7 +685,12 @@ private:
                 config_.llm.timeout_ms,
                 config_.llm.max_tokens
             );
+            llm_stop_reason = response.stop_reason;
             llm_response = response.content;
+            if (response.stop_reason == "length") {
+                LOG_LLM("Truncated response (done_reason=length), using fallback");
+                llm_response = config_.llm.truncation.fallback_phrase;
+            }
             session_memory_->add_user_message(llm_prompt);
             session_memory_->add_assistant_message(llm_response);
         } else {
@@ -614,8 +736,13 @@ private:
                 
                 // If no tool calls, we're done (LLM responded directly)
                 if (!response.has_tool_calls()) {
+                    llm_stop_reason = response.stop_reason;
                     if (response.has_content()) {
                         llm_response = response.content;
+                        if (response.stop_reason == "length") {
+                            LOG_LLM("Truncated response (done_reason=length), using fallback");
+                            llm_response = config_.llm.truncation.fallback_phrase;
+                        }
                     } else {
                         // Empty response, use fallback
                         llm_response = "Stand by.";
@@ -662,6 +789,12 @@ private:
         auto llm_end = std::chrono::steady_clock::now();
         int64_t llm_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
             llm_end - llm_start).count();
+        {
+            std::ostringstream toss;
+            toss << "done_reason=" << (llm_stop_reason.empty() ? "unknown" : llm_stop_reason)
+                 << " latency_ms=" << llm_ms;
+            LOG_TRACE(utterance_id, "llm", toss.str());
+        }
         
         std::ostringstream llm_oss;
         llm_oss << "(" << llm_ms << "ms) " << llm_response;
@@ -679,7 +812,16 @@ private:
         // Synthesize response (ensure transmission ends with " over.")
         std::string response_text = utils::ensure_ends_with_over(llm_response);
         LOG_TTS("Synthesizing response...");
+        auto tts_start = std::chrono::steady_clock::now();
         response_audio = tts_->synth_vox(response_text);
+        auto tts_end = std::chrono::steady_clock::now();
+        int64_t tts_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+            tts_end - tts_start).count();
+        {
+            std::ostringstream toss;
+            toss << "samples=" << response_audio.size() << " latency_ms=" << tts_ms;
+            LOG_TRACE(utterance_id, "tts", toss.str());
+        }
         recorder_->record_tts_output(response_audio, utterance_id);
         if (wait_for_channel_clear) {
             if (session_memory_->message_count() >= 4) {
@@ -732,6 +874,22 @@ private:
         }
     }
 
+    static bool last_user_turn_is_low_signal(const std::vector<std::string>& snapshot) {
+        std::string last_user_content;
+        for (auto it = snapshot.rbegin(); it != snapshot.rend(); ++it) {
+            try {
+                json msg = json::parse(*it);
+                std::string role = msg.value("role", "");
+                if (role == "user") {
+                    last_user_content = msg.value("content", "");
+                    break;
+                }
+            } catch (...) { continue; }
+        }
+        std::string trimmed = utils::trim_copy(last_user_content);
+        return trimmed.empty() || static_cast<int>(trimmed.size()) < 2;
+    }
+
     void summarizer_worker_loop() {
         while (true) {
             std::vector<std::string> job;
@@ -744,6 +902,7 @@ private:
                 job = std::move(pending_snapshot_);
                 pending_snapshot_.clear();
             }
+            if (last_user_turn_is_low_signal(job)) continue;
             std::string formatted = format_snapshot_for_summary(job);
             if (formatted.empty()) continue;
             std::string s = summarizer_llm_->summarize_conversation(formatted, config_.llm.timeout_ms);

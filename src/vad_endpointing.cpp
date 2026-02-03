@@ -16,22 +16,29 @@ public:
           speech_samples_(0),
           silence_samples_(0),
           current_hangover_samples_(0),
-          current_segment_() {
+          current_segment_(),
+          noise_floor_(config.threshold * 0.3f),
+          noise_floor_initialized_(false) {
         int sample_rate = DEFAULT_SAMPLE_RATE;
         min_speech_samples_ = (config.min_speech_ms * sample_rate) / 1000;
         end_silence_samples_ = (config.end_of_utterance_silence_ms * sample_rate) / 1000;
         max_hangover_samples_ = (config.hangover_ms * sample_rate) / 1000;
         pause_tolerance_samples_ = (config.pause_tolerance_ms * sample_rate) / 1000;
         start_threshold_ = config_.threshold;
-        end_threshold_ = config_.threshold * 0.5f;  // Hysteresis: only count as "speech" if rms above this; lowers chance of getting stuck
+        end_threshold_ = config_.threshold * 0.5f;  // base; overridden by adaptive thresholds
         start_frames_required_ = 2;  // Debounce: require 2 consecutive hot frames (~40ms) before SpeechStart
     }
     
     VADEvent process(const AudioFrame& frame) {
         float rms = compute_energy(frame);
-        // Start: use strict threshold; once in speech, use lower threshold (hysteresis)
-        bool above_start = rms > start_threshold_;
-        bool above_end = rms > end_threshold_;
+        update_noise_floor(rms);
+        float effective_start = std::max(start_threshold_, noise_floor_ * 2.0f + 0.02f);
+        float effective_end = std::max(end_threshold_, noise_floor_ * 1.3f + 0.01f);
+        // Only reset silence counter when energy is clearly speech (not small bumps); lets 450ms accumulate
+        float silence_reset_threshold = std::max(effective_end, noise_floor_ * 2.0f + 0.03f);
+        bool above_start = rms > effective_start;
+        bool above_end = rms > effective_end;
+        bool clear_speech = rms > silence_reset_threshold;  // only clear speech resets silence counter
         
         VADEvent event = VADEvent::None;
         
@@ -39,8 +46,9 @@ public:
             const char* state_str = (state_ == VADState::Silence) ? "Silence" :
                 (state_ == VADState::Speech) ? "Speech" : "Hangover";
             std::ostringstream oss;
-            oss << "[VAD] rms=" << rms << " start_thr=" << start_threshold_
-                << " end_thr=" << end_threshold_ << " state=" << state_str
+            oss << "[VAD] rms=" << rms << " noise_floor=" << noise_floor_
+                << " start_thr=" << effective_start << " end_thr=" << effective_end
+                << " state=" << state_str
                 << " above_start=" << (above_start ? 1 : 0) << " above_end=" << (above_end ? 1 : 0);
             Logger::info(oss.str());
         }
@@ -70,42 +78,31 @@ public:
             }
                 
             case VADState::Speech: {
-                // Hysteresis: during speech, treat as "speech" if above end_threshold (lower)
-                bool is_speech = above_end;
+                // Only reset silence when energy is clearly speech; small bumps (breathing, noise) don't reset
                 current_segment_.insert(current_segment_.end(), frame.begin(), frame.end());
                 debug_samples_since_log_ += static_cast<int64_t>(frame.size());
                 
-                if (is_speech) {
+                if (clear_speech) {
                     speech_samples_ += frame.size();
                     silence_samples_ = 0;
                 } else {
                     silence_samples_ += frame.size();
-                    
-                    if (silence_samples_ >= pause_tolerance_samples_ && 
-                        silence_samples_ < end_silence_samples_) {
-                        // within pause tolerance - keep accumulating
-                    } else if (silence_samples_ >= end_silence_samples_) {
-                        if (speech_samples_ >= min_speech_samples_) {
-                            state_ = VADState::Hangover;
-                            current_hangover_samples_ = 0;
-                            event = VADEvent::SpeechEnd;
-                            std::ostringstream oss;
-                            oss << "[VAD] SpeechEnd rms=" << rms << " threshold=" << end_threshold_
-                                << " silence_ms=" << (silence_samples_ * 1000 / DEFAULT_SAMPLE_RATE);
-                            Logger::info(oss.str());
-                        } else {
-                            state_ = VADState::Silence;
-                            current_segment_.clear();
-                            speech_samples_ = 0;
-                            silence_samples_ = 0;
-                        }
+                    if (silence_samples_ >= end_silence_samples_) {
+                        // Always fire SpeechEnd when we have enough silence; let STT handle very short segments
+                        state_ = VADState::Hangover;
+                        current_hangover_samples_ = 0;
+                        event = VADEvent::SpeechEnd;
+                        std::ostringstream oss;
+                        oss << "[VAD] SpeechEnd rms=" << rms << " end_thr=" << effective_end
+                            << " silence_ms=" << (silence_samples_ * 1000 / DEFAULT_SAMPLE_RATE);
+                        Logger::info(oss.str());
                     }
                 }
                 if (debug_samples_since_log_ >= DEFAULT_SAMPLE_RATE / 2) {
                     debug_samples_since_log_ = 0;
                     std::ostringstream oss;
-                    oss << "[VAD] state=Speech rms=" << rms << " end_thr=" << end_threshold_
-                        << " is_speech=" << (is_speech ? 1 : 0)
+                    oss << "[VAD] state=Speech rms=" << rms << " end_thr=" << effective_end
+                        << " clear_speech=" << (clear_speech ? 1 : 0)
                         << " silence_ms=" << (silence_samples_ * 1000 / DEFAULT_SAMPLE_RATE)
                         << " speech_ms=" << (speech_samples_ * 1000 / DEFAULT_SAMPLE_RATE);
                     Logger::info(oss.str());
@@ -154,6 +151,24 @@ public:
     }
 
 private:
+    void update_noise_floor(float rms) {
+        const float alpha_silence = 0.92f;   // slow adaptation when in silence
+        const float alpha_speech = 0.995f;   // very slow when in speech (low rms = possible ambient)
+        const float min_noise = 0.005f;
+        const float max_noise = 0.25f;
+        if (state_ == VADState::Silence) {
+            if (!noise_floor_initialized_) {
+                noise_floor_ = std::max(min_noise, std::min(max_noise, rms));
+                noise_floor_initialized_ = true;
+            } else {
+                noise_floor_ = alpha_silence * noise_floor_ + (1.0f - alpha_silence) * rms;
+                noise_floor_ = std::max(min_noise, std::min(max_noise, noise_floor_));
+            }
+        } else if (state_ == VADState::Speech && rms <= noise_floor_ * 1.5f + 0.02f) {
+            noise_floor_ = alpha_speech * noise_floor_ + (1.0f - alpha_speech) * std::max(rms, min_noise);
+            noise_floor_ = std::max(min_noise, std::min(max_noise, noise_floor_));
+        }
+    }
     enum class VADState {
         Silence,
         Speech,
@@ -187,6 +202,8 @@ private:
     int64_t pause_tolerance_samples_;
     int64_t debug_samples_since_log_ = 0;
     AudioBuffer current_segment_;
+    float noise_floor_;
+    bool noise_floor_initialized_;
 };
 
 VADEndpointing::VADEndpointing(const VADConfig& config) 

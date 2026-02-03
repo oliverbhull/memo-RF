@@ -16,6 +16,18 @@ public:
         add_fast_path_rule("over", "over.");
     }
     
+    Plan decide(const Transcript& transcript, const std::string& context,
+                float repair_confidence_threshold, const std::string& repair_phrase) {
+        if (repair_confidence_threshold > 0.0f && transcript.confidence < repair_confidence_threshold) {
+            Plan plan;
+            plan.type = PlanType::Speak;
+            plan.answer_text = repair_phrase.empty() ? "Say again, over" : repair_phrase;
+            plan.needs_llm = false;
+            return plan;
+        }
+        return decide(transcript.text, context);
+    }
+
     Plan decide(const std::string& transcript, const std::string& context) {
         Plan plan;
         
@@ -67,8 +79,17 @@ private:
 Router::Router() : pimpl_(std::make_unique<Impl>()) {}
 Router::~Router() = default;
 
-Plan Router::decide(const std::string& transcript, const std::string& context) {
-    return pimpl_->decide(transcript, context);
+Plan Router::decide(const Transcript& transcript, const std::string& context,
+                    float repair_confidence_threshold, const std::string& repair_phrase) {
+    return pimpl_->decide(transcript, context, repair_confidence_threshold, repair_phrase);
+}
+
+Plan Router::decide(const std::string& transcript_text, const std::string& context) {
+    Transcript t;
+    t.text = transcript_text;
+    t.confidence = 1.0f;
+    t.token_count = 0;
+    return pimpl_->decide(t.text, context);
 }
 
 void Router::add_fast_path_rule(const std::string& pattern, const std::string& response) {

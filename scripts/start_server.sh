@@ -21,6 +21,11 @@ case "$MODEL_CHOICE" in
         ;;
 esac
 
+# Optional env override for model path
+if [ -n "${MEMO_RF_LLM_MODEL:-}" ] && [ -f "${MEMO_RF_LLM_MODEL}" ]; then
+    MODEL_PATH="$MEMO_RF_LLM_MODEL"
+fi
+
 if [ ! -f "$MODEL_PATH" ]; then
     echo "Error: Model not found at: $MODEL_PATH"
     echo ""
@@ -39,28 +44,33 @@ if [ ! -f "$MODEL_PATH" ]; then
     exit 1
 fi
 
-# Try to find llama.cpp server binary
-# Common locations and names
+# Try to find llama.cpp server binary ($MEMO_RF_LLAMA_DIR or $LLAMA_CPP_DIR, then $HOME paths)
 SERVER_BIN=""
-for path in \
-    "/Users/oliverhull/dev/llama.cpp/build/bin/llama-server" \
-    "/Users/oliverhull/dev/llama.cpp/build/bin/server" \
-    "/Users/oliverhull/dev/llama.cpp/bin/server" \
-    "/Users/oliverhull/dev/llama.cpp/server"; do
-    if [ -f "$path" ] && [ -x "$path" ]; then
-        SERVER_BIN="$path"
-        break
-    fi
-done
+if [ -n "${MEMO_RF_LLAMA_DIR:-}" ] && [ -x "${MEMO_RF_LLAMA_DIR}/build/bin/llama-server" ]; then
+    SERVER_BIN="${MEMO_RF_LLAMA_DIR}/build/bin/llama-server"
+elif [ -n "${LLAMA_CPP_DIR:-}" ] && [ -x "${LLAMA_CPP_DIR}/build/bin/llama-server" ]; then
+    SERVER_BIN="${LLAMA_CPP_DIR}/build/bin/llama-server"
+else
+    for path in \
+        "$HOME/dev/llama.cpp/build/bin/llama-server" \
+        "$HOME/dev/llama.cpp/build/bin/server" \
+        "$HOME/llama.cpp/build/bin/llama-server" \
+        "$HOME/llama.cpp/build/bin/server" \
+        "$HOME/llama.cpp/bin/server" \
+        "/usr/local/bin/llama-server" \
+        "/usr/local/bin/llama.cpp/build/bin/llama-server"; do
+        if [ -f "${path}" ] && [ -x "${path}" ]; then
+            SERVER_BIN="$path"
+            break
+        fi
+    done
+fi
 
 if [ -z "$SERVER_BIN" ]; then
     echo "Error: llama.cpp server binary not found"
     echo ""
-    echo "Please build llama.cpp server:"
-    echo "  ./scripts/build_llama_server.sh"
-    echo ""
-    echo "Or manually:"
-    echo "  cd /Users/oliverhull/dev/llama.cpp"
+    echo "Set MEMO_RF_LLAMA_DIR or LLAMA_CPP_DIR to your llama.cpp clone, or build:"
+    echo "  cd \$HOME/dev/llama.cpp"
     echo "  cmake -B build -DLLAMA_SERVER=ON"
     echo "  cmake --build build --config Release"
     echo ""

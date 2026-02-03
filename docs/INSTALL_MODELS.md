@@ -33,13 +33,20 @@ huggingface-cli download Qwen/Qwen2-1.5B-Instruct-GGUF \
 
 ### Starting llama.cpp Server with QWEN
 
+Use the project script (uses `$HOME` and env vars; see `scripts/start_server.sh`):
+
 ```bash
-cd /path/to/whisper.cpp/build/bin
-./whisper-server \
-    -m ~/models/llm/qwen2-1_5b-instruct-q5_k_m.gguf \
-    -c 2048 \
-    --port 8080 \
-    -ngl 35  # Offload layers to GPU (adjust based on your GPU)
+./scripts/start_server.sh qwen 8080
+# Optional: set MEMO_RF_LLAMA_DIR or LLAMA_CPP_DIR to your llama.cpp clone
+# Optional: set MEMO_RF_LLM_MODEL to override model path
+```
+
+Or run the server binary directly:
+
+```bash
+# After building llama.cpp (e.g. cd $HOME/dev/llama.cpp && cmake -B build -DLLAMA_SERVER=ON && cmake --build build)
+./llama-server -m ~/models/llm/qwen2-1_5b-instruct-q5_k_m.gguf -c 2048 --port 8080 --gpu-layers 35 --host 0.0.0.0
+# On Jetson: use a lower --gpu-layers or 0 for CPU-only if OOM
 ```
 
 ## 2. Installing Piper TTS
@@ -68,14 +75,23 @@ export PATH="$PATH:$(pwd)"
 
 ### Option C: Pre-built Binary
 
-Download from: https://github.com/rhasspy/piper/releases
+Use the install script (detects macOS vs Linux and architecture):
 
 ```bash
-# Download for macOS
-cd ~/dev
-wget https://github.com/rhasspy/piper/releases/download/v1.2.0/piper_macos_amd64.tar.gz
-tar -xzf piper_macos_amd64.tar.gz
-# piper binary is now in the extracted directory
+./scripts/install_piper.sh
+# Choose option 2; script downloads piper_macos_*.tar.gz or piper_linux_*.tar.gz as appropriate
+```
+
+Or download manually from: https://github.com/rhasspy/piper/releases
+
+**macOS:** `piper_macos_arm64.tar.gz` or `piper_macos_amd64.tar.gz`  
+**Linux (including Jetson):** `piper_linux_arm64.tar.gz` (aarch64/Jetson) or `piper_linux_amd64.tar.gz` (x86_64)
+
+```bash
+cd ~/dev  # or $HOME/models/piper for voice-only
+# Example Linux aarch64 (Jetson):
+wget https://github.com/rhasspy/piper/releases/download/v1.2.0/piper_linux_arm64.tar.gz
+tar -xzf piper_linux_arm64.tar.gz
 ```
 
 ### Downloading Piper Voice Models
@@ -100,15 +116,22 @@ piper-tts --download-voice en_US-lessac-medium
 echo "Hello, this is a test." | piper --model ~/models/piper/en_US-lessac-medium.onnx --output_file test.wav
 
 # Play the output
+# macOS:
 afplay test.wav
+# Linux:
+aplay test.wav
+# or: ffplay -nodisp -autoexit test.wav
 ```
 
 ## 3. Update config.json
 
-After installation, update your config:
+After installation, update your config. Paths support `~` expansion at load time. Suggested layout: `~/models/whisper/`, `~/models/piper/`, `~/models/llm/`.
 
 ```json
 {
+  "stt": {
+    "model_path": "~/models/whisper/ggml-small.en-q5_1.bin"
+  },
   "llm": {
     "endpoint": "http://localhost:8080/completion",
     "timeout_ms": 2000,
@@ -117,34 +140,26 @@ After installation, update your config:
   },
   "tts": {
     "voice_path": "~/models/piper/en_US-lessac-medium.onnx",
-    "vox_preroll_ms": 200,
-    "output_gain": 1.0
+    "piper_path": "",
+    "espeak_data_path": ""
   }
 }
 ```
 
+- **piper_path**: Leave empty to auto-detect piper (PATH or common locations). On Linux/Jetson, set to full path if piper is not in PATH (e.g. `~/dev/piper/piper`).
+- **espeak_data_path**: Leave empty for platform default (Linux: `/usr/share/espeak-ng-data`, macOS: `/opt/homebrew/share/espeak-ng-data`).
+
 ## 4. Quick Start Script
 
-Create a startup script:
+Start LLM server in one terminal, then memo-RF in another:
 
 ```bash
-#!/bin/bash
-# start-memo-rf.sh
+# Terminal 1: start llama.cpp server (uses $HOME/models/llm/ or MEMO_RF_LLM_MODEL)
+./scripts/start_server.sh qwen 8080
 
-# Start llama.cpp server in background
-cd /path/to/whisper.cpp/build/bin
-./whisper-server -m ~/models/llm/qwen2-1_5b-instruct-q5_k_m.gguf -c 2048 --port 8080 &
-SERVER_PID=$!
-
-# Wait for server to start
-sleep 3
-
-# Start memo-rf
-cd /path/to/memo-RF/build
+# Terminal 2: run memo-RF
+cd build
 ./memo-rf ../config/config.json
-
-# Cleanup
-kill $SERVER_PID
 ```
 
 ## Troubleshooting

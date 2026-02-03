@@ -23,6 +23,7 @@ struct ToolCall {
 struct LLMResponse {
     std::string content;                    // Text content (if any)
     std::vector<ToolCall> tool_calls;       // Tool calls (if any)
+    std::string stop_reason;                // Why generation stopped (e.g. "stop", "length")
     bool has_tool_calls() const { return !tool_calls.empty(); }
     bool has_content() const { return !content.empty(); }
 };
@@ -82,12 +83,14 @@ public:
      * @param raw_user_message Latest STT output (may contain recognition errors)
      * @param conversation_history Session history (e.g. from ConversationMemory::to_json_strings())
      * @param timeout_ms Timeout in ms (0 = use config default)
+     * @param min_chars Minimum character count (after trim) to run clarifier; 0 = disabled
      * @return Clarified user message, or raw_user_message if clarification fails or no history
      */
     std::string clarify_user_message(
         const std::string& raw_user_message,
         const std::vector<std::string>& conversation_history,
-        int timeout_ms = 0);
+        int timeout_ms = 0,
+        int min_chars = 0);
 
     /**
      * @brief Summarize conversation (for background context compression).

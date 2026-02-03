@@ -84,6 +84,10 @@ else()
         /usr/local
         /opt/homebrew
     )
+    # Linux / Jetson: add standard and user-local paths
+    if(UNIX AND NOT APPLE)
+        list(APPEND WHISPER_POSSIBLE_PATHS /usr /usr/local $ENV{HOME}/.local)
+    endif()
     message(STATUS "Searching for whisper.cpp in: ${WHISPER_POSSIBLE_PATHS}")
 endif()
 
@@ -196,6 +200,7 @@ set(LEGACY_SOURCES
     src/main.cpp
     src/agent.cpp
     src/audio_io.cpp
+    src/path_utils.cpp
     src/vad_endpointing.cpp
     src/stt_engine.cpp
     src/router.cpp
@@ -266,6 +271,7 @@ set(LEGACY_HEADERS
     include/common.h
     include/logger.h
     include/utils.h
+    include/transcript_gate.h
     include/errors.h
     include/tool.h
     include/tool_registry.h
@@ -296,7 +302,7 @@ target_link_libraries(memo-rf
     curl
 )
 
-# Add macOS frameworks for PortAudio (required on macOS)
+# macOS only: link frameworks required for PortAudio. On Linux, no extra libraries needed.
 if(APPLE)
     find_library(COREAUDIO_FRAMEWORK CoreAudio)
     find_library(AUDIOTOOLBOX_FRAMEWORK AudioToolbox)
@@ -352,3 +358,8 @@ endif()
 
 # Install
 install(TARGETS memo-rf DESTINATION bin)
+
+# Deterministic test harness: gate + router only (no whisper/PortAudio)
+add_executable(test_pipeline tests/test_pipeline.cpp src/router.cpp)
+target_include_directories(test_pipeline PRIVATE ${CMAKE_SOURCE_DIR}/include)
+target_link_libraries(test_pipeline)

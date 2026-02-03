@@ -3,7 +3,7 @@
 
 set -e
 
-LLAMA_DIR="${1:-/Users/oliverhull/dev/llama.cpp}"
+LLAMA_DIR="${1:-$HOME/dev/llama.cpp}"
 
 if [ ! -d "$LLAMA_DIR" ]; then
     echo "Error: llama.cpp directory not found at: $LLAMA_DIR"
@@ -28,7 +28,7 @@ cmake -B build -DLLAMA_SERVER=ON -DCMAKE_BUILD_TYPE=Release
 
 # Build
 echo "Building (this may take a while)..."
-cmake --build build --config Release -j$(sysctl -n hw.ncpu 2>/dev/null || echo 4)
+cmake --build build --config Release -j$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 4)
 
 # Check if server was built
 if [ -f "build/bin/server" ]; then

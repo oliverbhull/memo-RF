@@ -39,12 +39,20 @@ public:
     ~Router();
     
     /**
-     * @brief Decide on response plan based on transcript
-     * @param transcript User's transcribed speech
+     * @brief Decide on response plan based on transcript (with confidence/repair)
+     * @param transcript Full transcript (text, confidence, token_count)
      * @param context Optional context (reserved for future use)
+     * @param repair_confidence_threshold Below this: return repair plan (0 = disabled)
+     * @param repair_phrase Text to speak when returning repair plan (e.g. "Say again, over")
      * @return Plan object describing response strategy
      */
-    Plan decide(const std::string& transcript, const std::string& context = "");
+    Plan decide(const Transcript& transcript, const std::string& context = "",
+               float repair_confidence_threshold = 0.0f, const std::string& repair_phrase = "");
+
+    /**
+     * @brief Decide on response plan based on transcript text only (backward compatibility)
+     */
+    Plan decide(const std::string& transcript_text, const std::string& context = "");
     
     /**
      * @brief Add fast-path rule for keyword matching

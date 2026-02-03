@@ -65,6 +65,19 @@ inline bool is_empty_or_whitespace(const std::string& str) {
 }
 
 /**
+ * @brief Check if transcript text is blank (empty/whitespace or equals blank sentinel)
+ * @param text Raw transcript text
+ * @param blank_sentinel String to treat as blank (e.g. "[BLANK_AUDIO]"); compared after trim
+ * @return True if text is empty, whitespace-only, or equals blank_sentinel after trim
+ */
+inline bool is_blank_transcript(const std::string& text, const std::string& blank_sentinel = "[BLANK_AUDIO]") {
+    std::string t = trim_copy(text);
+    if (t.empty()) return true;
+    if (!blank_sentinel.empty() && t == blank_sentinel) return true;
+    return false;
+}
+
+/**
  * @brief Ensure transmission text ends with " over." (radio protocol)
  * Replaces trailing "over and out" with "over." so we never say both or double "over."
  * @param str Text that will be spoken over the air

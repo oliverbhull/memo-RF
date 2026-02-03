@@ -73,7 +73,7 @@ struct LLMConfig {
  */
 struct TTSConfig {
     std::string voice_path;
-    std::string espeak_data_path = "/opt/homebrew/share/espeak-ng-data";
+    std::string espeak_data_path;  ///< Empty = platform default at load/use
     std::string piper_path;  // Empty = auto-detect
     int preroll_ms = constants::tts::VOX_PREROLL_MS;
     float output_gain = 1.0f;

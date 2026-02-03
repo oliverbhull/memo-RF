@@ -27,8 +27,8 @@ struct PiperConfig {
     /// Path to Piper voice model (.onnx file)
     std::string voice_path;
 
-    /// Path to espeak-ng data directory
-    std::string espeak_data_path = "/opt/homebrew/share/espeak-ng-data";
+    /// Path to espeak-ng data directory (empty = platform default at runtime)
+    std::string espeak_data_path;
 
     /// Custom piper binary path (empty = auto-detect)
     std::string piper_path;

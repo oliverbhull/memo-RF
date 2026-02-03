@@ -5,6 +5,7 @@
 
 #include "tts/piper_tts.h"
 #include "logger.h"
+#include "path_utils.h"
 #include <fstream>
 #include <cmath>
 #include <cstdlib>
@@ -244,13 +245,18 @@ private:
             return VoidResult::failure("Custom piper path not found: " + config_.piper_path);
         }
 
-        // Try common locations
-        std::vector<std::string> search_paths = {
-            "/Users/oliverhull/dev/piper/build/piper",
-            "/usr/local/bin/piper",
-            "/opt/homebrew/bin/piper",
-            "/usr/bin/piper"
-        };
+        // Platform-agnostic search list ($HOME/bin, $HOME/.local/bin, /usr/local/bin, /usr/bin; macOS: /opt/homebrew/bin)
+        std::vector<std::string> search_paths;
+        const char* home = std::getenv("HOME");
+        if (home) {
+            search_paths.push_back(std::string(home) + "/bin/piper");
+            search_paths.push_back(std::string(home) + "/.local/bin/piper");
+        }
+        search_paths.push_back("/usr/local/bin/piper");
+        search_paths.push_back("/usr/bin/piper");
+#ifdef __APPLE__
+        search_paths.push_back("/opt/homebrew/bin/piper");
+#endif
 
         for (const auto& path : search_paths) {
             std::ifstream test(path);
@@ -302,12 +308,13 @@ private:
         // Escape text for shell
         std::string escaped_text = escape_for_shell(text);
 
-        // Build command
+        // Build command (use platform default for espeak_data_path if empty)
+        std::string espeak = config_.espeak_data_path.empty() ? default_espeak_data_path() : config_.espeak_data_path;
         std::ostringstream cmd;
         cmd << "echo \"" << escaped_text << "\" | "
             << cached_piper_path_
             << " --model " << config_.voice_path
-            << " --espeak_data " << config_.espeak_data_path
+            << " --espeak_data " << espeak
             << " --output_file " << temp_wav
             << " 2>/dev/null";  // Suppress stderr
 
