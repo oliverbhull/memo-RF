@@ -37,6 +37,18 @@ public:
         // Play audio (triggers VOX)
         audio_io_->play(limited_buffer);
     }
+
+    void transmit_append(const AudioBuffer& buffer) {
+        if (!audio_io_) return;
+        AudioBuffer limited_buffer = buffer;
+        if (config_.max_transmit_ms > 0) {
+            int max_samples = (config_.max_transmit_ms * DEFAULT_SAMPLE_RATE) / 1000;
+            if (limited_buffer.size() > static_cast<size_t>(max_samples)) {
+                limited_buffer.resize(max_samples);
+            }
+        }
+        audio_io_->append_playback(limited_buffer);
+    }
     
     bool is_transmitting() const {
         return transmitting_ && audio_io_ && !audio_io_->is_playback_complete();
@@ -62,6 +74,10 @@ TXController::~TXController() = default;
 
 void TXController::transmit(const AudioBuffer& buffer) {
     pimpl_->transmit(buffer);
+}
+
+void TXController::transmit_append(const AudioBuffer& buffer) {
+    pimpl_->transmit_append(buffer);
 }
 
 bool TXController::is_transmitting() const {

@@ -1,5 +1,11 @@
 # Installing QWEN Model and Piper TTS
 
+## 0. Whisper (STT) and low latency on macOS
+
+- **Metal GPU:** For lower STT latency on macOS, build whisper.cpp with Metal support: `cd whisper.cpp && make GGML_METAL=1`. Memo-RF uses GPU by default when available; set `stt.use_gpu` to `false` in config if your whisper.cpp was built without Metal. A smaller Whisper model (e.g. tiny.en) reduces STT latency at the cost of accuracy.
+- **Translator persona:** For the translator persona, use a dedicated translation model for lower latency. With Ollama: set `llm.translation_model` to `translategemma` in config and run `ollama pull translategemma`. Set `llm.keep_alive_sec` (e.g. 300) and `llm.warmup_translation_model` to `true` so the model stays loaded and the first request avoids load_duration. See README Personas and "Low latency (translator)" section.
+- **TTS:** A smaller Piper voice (e.g. low quality) can reduce TTS time vs medium. Reduce `tts.vox_preroll_ms` (e.g. 200) for slightly faster first audio.
+
 ## 1. Installing QWEN Model for llama.cpp
 
 ### Option A: Using huggingface-cli (Recommended)

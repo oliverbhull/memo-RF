@@ -133,6 +133,8 @@ Config Config::load_from_file(const std::string& path) {
     if (j.contains("vad")) {
         auto& v = j["vad"];
         if (v.contains("threshold")) cfg.vad.threshold = v["threshold"];
+        if (v.contains("silence_threshold")) cfg.vad.silence_threshold = v["silence_threshold"];
+        if (v.contains("start_frames_required")) cfg.vad.start_frames_required = v["start_frames_required"];
         if (v.contains("end_of_utterance_silence_ms")) 
             cfg.vad.end_of_utterance_silence_ms = v["end_of_utterance_silence_ms"];
         if (v.contains("min_speech_ms")) cfg.vad.min_speech_ms = v["min_speech_ms"];
@@ -147,6 +149,7 @@ Config Config::load_from_file(const std::string& path) {
         if (s.contains("model_path")) cfg.stt.model_path = s["model_path"];
         if (s.contains("language")) cfg.stt.language = s["language"];
         if (s.contains("blank_sentinel")) cfg.stt.blank_sentinel = s["blank_sentinel"];
+        if (s.contains("use_gpu")) cfg.stt.use_gpu = s["use_gpu"];
     }
     
     // Transcript gate config
@@ -186,7 +189,11 @@ Config Config::load_from_file(const std::string& path) {
         if (l.contains("timeout_ms")) cfg.llm.timeout_ms = l["timeout_ms"];
         if (l.contains("max_tokens")) cfg.llm.max_tokens = l["max_tokens"];
         if (l.contains("context_max_turns_to_send")) cfg.llm.context_max_turns_to_send = l["context_max_turns_to_send"];
+        if (l.contains("keep_alive_sec")) cfg.llm.keep_alive_sec = l["keep_alive_sec"];
         if (l.contains("model_name")) cfg.llm.model_name = l["model_name"];
+        if (l.contains("translation_model") && l["translation_model"].is_string())
+            cfg.llm.translation_model = l["translation_model"].get<std::string>();
+        if (l.contains("warmup_translation_model")) cfg.llm.warmup_translation_model = l["warmup_translation_model"];
         if (l.contains("temperature")) cfg.llm.temperature = l["temperature"];
         if (l.contains("system_prompt")) cfg.llm.system_prompt = l["system_prompt"];
         if (l.contains("agent_persona") && l["agent_persona"].is_string()) {
@@ -249,6 +256,14 @@ Config Config::load_from_file(const std::string& path) {
             }
         }
     }
+
+    // Memory config (conversation history for multi-turn)
+    if (j.contains("memory")) {
+        auto& mem = j["memory"];
+        if (mem.contains("enabled")) cfg.memory.enabled = mem["enabled"];
+        if (mem.contains("max_messages")) cfg.memory.max_messages = mem["max_messages"];
+        if (mem.contains("max_tokens")) cfg.memory.max_tokens = mem["max_tokens"];
+    }
     
     // Session/replay
     if (j.contains("session_log_dir")) cfg.session_log_dir = j["session_log_dir"];
@@ -284,6 +299,8 @@ void Config::save_to_file(const std::string& path) const {
     j["audio"]["sample_rate"] = audio.sample_rate;
     
     j["vad"]["threshold"] = vad.threshold;
+    j["vad"]["silence_threshold"] = vad.silence_threshold;
+    j["vad"]["start_frames_required"] = vad.start_frames_required;
     j["vad"]["end_of_utterance_silence_ms"] = vad.end_of_utterance_silence_ms;
     j["vad"]["min_speech_ms"] = vad.min_speech_ms;
     j["vad"]["hangover_ms"] = vad.hangover_ms;
@@ -293,6 +310,7 @@ void Config::save_to_file(const std::string& path) const {
     j["stt"]["model_path"] = stt.model_path;
     j["stt"]["language"] = stt.language;
     j["stt"]["blank_sentinel"] = stt.blank_sentinel;
+    j["stt"]["use_gpu"] = stt.use_gpu;
     
     j["transcript_gate"]["min_transcript_chars"] = transcript_gate.min_transcript_chars;
     j["transcript_gate"]["min_transcript_tokens"] = transcript_gate.min_transcript_tokens;
@@ -312,7 +330,10 @@ void Config::save_to_file(const std::string& path) const {
     j["llm"]["timeout_ms"] = llm.timeout_ms;
     j["llm"]["max_tokens"] = llm.max_tokens;
     j["llm"]["context_max_turns_to_send"] = llm.context_max_turns_to_send;
+    if (llm.keep_alive_sec > 0) j["llm"]["keep_alive_sec"] = llm.keep_alive_sec;
     j["llm"]["model_name"] = llm.model_name;
+    if (!llm.translation_model.empty()) j["llm"]["translation_model"] = llm.translation_model;
+    if (llm.warmup_translation_model) j["llm"]["warmup_translation_model"] = llm.warmup_translation_model;
     j["llm"]["temperature"] = llm.temperature;
     if (!llm.agent_persona.empty()) {
         j["llm"]["agent_persona"] = llm.agent_persona;
@@ -343,6 +364,10 @@ void Config::save_to_file(const std::string& path) const {
     j["tx"]["enable_end_chirp"] = tx.enable_end_chirp;
 
     j["wake_word"]["enabled"] = wake_word.enabled;
+    
+    j["memory"]["enabled"] = memory.enabled;
+    j["memory"]["max_messages"] = memory.max_messages;
+    j["memory"]["max_tokens"] = memory.max_tokens;
     
     j["tools"]["enabled"] = tools.enabled;
     j["tools"]["timeout_ms"] = tools.timeout_ms;

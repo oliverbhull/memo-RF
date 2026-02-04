@@ -31,7 +31,8 @@ public:
                                    const std::string& tool_definitions_json,
                                    const std::vector<std::string>& conversation_history,
                                    int timeout_ms, int max_tokens,
-                                   const std::string& system_prompt_override = "") {
+                                   const std::string& model_override,
+                                   const std::string& system_prompt_override) {
         if (timeout_ms == 0) timeout_ms = config_.timeout_ms;
         if (max_tokens == 0) max_tokens = config_.max_tokens;
         
@@ -39,7 +40,7 @@ public:
         
         if (is_ollama_) {
             return generate_ollama_chat(prompt, tool_definitions_json, conversation_history,
-                                       timeout_ms, max_tokens, system_prompt_override);
+                                       timeout_ms, max_tokens, model_override, system_prompt_override);
         } else {
             // Fallback to legacy format
             response.content = generate(prompt, "", timeout_ms, max_tokens);
@@ -79,7 +80,7 @@ public:
             "(e.g. 'that' -> the topic just discussed). One line. No explanation, no preamble, no quotation marks. "
             "If the latest user message is empty or unintelligible, output exactly __UNKNOWN__.";
 
-        LLMResponse r = generate_ollama_chat("", "", clarifier_history, timeout_ms, 80, CLARIFIER_SYSTEM);
+        LLMResponse r = generate_ollama_chat("", "", clarifier_history, timeout_ms, 80, "", CLARIFIER_SYSTEM);
         std::string clarified = r.content;
         // Trim whitespace
         while (!clarified.empty() && (clarified.back() == ' ' || clarified.back() == '\n' || clarified.back() == '\r'))
@@ -100,7 +101,7 @@ public:
             "(e.g. what refers to what, what is what) so later turns can refer back. "
             "Output a brief factual summary only—plain prose, no radio procedure wording, no acknowledgments, no preamble.";
         std::vector<std::string> empty_history;
-        LLMResponse r = generate_ollama_chat(conversation_text, "", empty_history, timeout_ms, 60, SUMMARIZER_SYSTEM);
+        LLMResponse r = generate_ollama_chat(conversation_text, "", empty_history, timeout_ms, 60, "", SUMMARIZER_SYSTEM);
         std::string s = r.content;
         while (!s.empty() && (s.back() == ' ' || s.back() == '\n' || s.back() == '\r')) s.pop_back();
         size_t start = 0;
@@ -120,7 +121,8 @@ public:
         // Prepare JSON request (llama.cpp server format)
         json request;
         request["prompt"] = full_prompt;
-        request["n_predict"] = max_tokens;
+        int n_predict = (max_tokens > 0) ? max_tokens : config_.max_tokens;
+        if (n_predict > 0) request["n_predict"] = n_predict;
         request["temperature"] = config_.temperature;
         request["stop"] = json(config_.stop_sequences);
         request["stream"] = false;
@@ -255,13 +257,14 @@ private:
                                     const std::string& tool_definitions_json,
                                     const std::vector<std::string>& conversation_history,
                                     int timeout_ms, int max_tokens,
-                                    const std::string& system_prompt_override = "") {
+                                    const std::string& model_override,
+                                    const std::string& system_prompt_override) {
         LLMResponse response;
         
         // Build messages array
         json messages = json::array();
         
-        // Add system message first (override for clarification, else config)
+        // Add system message first (override when provided, else config)
         json system_msg;
         system_msg["role"] = "system";
         system_msg["content"] = system_prompt_override.empty() ? config_.system_prompt : system_prompt_override;
@@ -305,17 +308,18 @@ private:
             }
         }
         
-        // Build request
+        // Build request (use model_override when provided, else config)
         json request;
-        request["model"] = config_.model_name;
+        request["model"] = model_override.empty() ? config_.model_name : model_override;
         request["messages"] = messages;
         request["stream"] = false;
+        if (config_.keep_alive_sec > 0) request["keep_alive"] = config_.keep_alive_sec;
 
-        // Ollama options (includes anti-repetition)
+        // Ollama options (includes anti-repetition). num_predict=0 means no limit.
         int num_predict = (max_tokens > 0) ? max_tokens : config_.max_tokens;
         json options;
         options["temperature"] = config_.temperature;
-        options["num_predict"] = num_predict;
+        if (num_predict > 0) options["num_predict"] = num_predict;
         options["repeat_penalty"] = 1.3;
         options["repeat_last_n"] = 64;
         options["top_p"] = 0.9;
@@ -590,7 +594,154 @@ private:
         buffer->append(static_cast<char*>(contents), total_size);
         return total_size;
     }
-    
+
+    // Stream state for Ollama NDJSON parsing
+    struct StreamState {
+        std::string line_buffer;
+        std::string full_content;
+        LLMClient::StreamContentCallback on_delta;
+        bool done = false;
+    };
+
+    static size_t write_callback_stream(void* contents, size_t size, size_t nmemb, void* userp) {
+        StreamState* state = static_cast<StreamState*>(userp);
+        size_t total_size = size * nmemb;
+        const char* data = static_cast<const char*>(contents);
+        state->line_buffer.append(data, total_size);
+        // Parse complete lines (NDJSON)
+        for (;;) {
+            size_t pos = state->line_buffer.find('\n');
+            if (pos == std::string::npos) break;
+            std::string line = state->line_buffer.substr(0, pos);
+            state->line_buffer.erase(0, pos + 1);
+            if (line.empty()) continue;
+            try {
+                json obj = json::parse(line);
+                if (obj.contains("done") && obj["done"].get<bool>()) {
+                    state->done = true;
+                    break;
+                }
+                std::string delta;
+                if (obj.contains("message") && obj["message"].contains("content")
+                    && !obj["message"]["content"].is_null()) {
+                    delta = obj["message"]["content"].get<std::string>();
+                } else if (obj.contains("response") && !obj["response"].is_null()) {
+                    delta = obj["response"].get<std::string>();
+                }
+                if (!delta.empty()) {
+                    state->full_content += delta;
+                    if (state->on_delta) state->on_delta(delta);
+                }
+            } catch (const json::exception&) {
+                // Ignore malformed lines
+            }
+        }
+        return total_size;
+    }
+
+public:
+    std::string generate_ollama_chat_stream(const std::string& prompt,
+                                          const std::vector<std::string>& conversation_history,
+                                          int timeout_ms, int max_tokens,
+                                          const std::string& model_override,
+                                          const std::string& system_prompt_override,
+                                          LLMClient::StreamContentCallback on_delta) {
+        if (!is_ollama_) {
+            // Fallback to non-streaming
+            LLMResponse r = generate_ollama_chat(prompt, "", conversation_history,
+                timeout_ms, max_tokens, model_override, system_prompt_override);
+            return r.content;
+        }
+        json messages = json::array();
+        json system_msg;
+        system_msg["role"] = "system";
+        system_msg["content"] = system_prompt_override.empty() ? config_.system_prompt : system_prompt_override;
+        messages.push_back(system_msg);
+        for (const auto& msg : conversation_history) {
+            try {
+                json msg_json = json::parse(msg);
+                if (msg_json.contains("role") && msg_json["role"] == "system") continue;
+                messages.push_back(msg_json);
+            } catch (const json::exception&) { continue; }
+        }
+        if (!prompt.empty()) {
+            bool already_has_user = false;
+            if (!conversation_history.empty()) {
+                try {
+                    json last_msg = json::parse(conversation_history.back());
+                    if (last_msg.contains("role") && last_msg["role"] == "user"
+                        && last_msg.contains("content") && last_msg["content"] == prompt)
+                        already_has_user = true;
+                } catch (...) {}
+            }
+            if (!already_has_user) {
+                json user_msg;
+                user_msg["role"] = "user";
+                user_msg["content"] = prompt;
+                messages.push_back(user_msg);
+            }
+        }
+        json request;
+        request["model"] = model_override.empty() ? config_.model_name : model_override;
+        request["messages"] = messages;
+        request["stream"] = true;
+        if (config_.keep_alive_sec > 0) request["keep_alive"] = config_.keep_alive_sec;
+        int num_predict = (max_tokens > 0) ? max_tokens : config_.max_tokens;
+        json options;
+        options["temperature"] = config_.temperature;
+        if (num_predict > 0) options["num_predict"] = num_predict;
+        options["repeat_penalty"] = 1.3;
+        options["repeat_last_n"] = 64;
+        options["top_p"] = 0.9;
+        request["options"] = options;
+        std::string request_json = request.dump();
+
+        StreamState stream_state;
+        stream_state.on_delta = std::move(on_delta);
+        std::atomic<bool> request_complete(false);
+        std::string error_msg;
+
+        std::thread request_thread([&]() {
+            CURL* curl = curl_easy_init();
+            if (!curl) {
+                error_msg = "Failed to initialize CURL";
+                request_complete = true;
+                return;
+            }
+            struct curl_slist* headers = nullptr;
+            headers = curl_slist_append(headers, "Content-Type: application/json");
+            curl_easy_setopt(curl, CURLOPT_URL, config_.endpoint.c_str());
+            curl_easy_setopt(curl, CURLOPT_POSTFIELDS, request_json.c_str());
+            curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
+            curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_callback_stream);
+            curl_easy_setopt(curl, CURLOPT_WRITEDATA, &stream_state);
+            curl_easy_setopt(curl, CURLOPT_TIMEOUT_MS, timeout_ms);
+            curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT_MS, 1000);
+            CURLcode res = curl_easy_perform(curl);
+            if (res != CURLE_OK) error_msg = curl_easy_strerror(res);
+            curl_slist_free_all(headers);
+            curl_easy_cleanup(curl);
+            request_complete = true;
+        });
+
+        auto start = std::chrono::steady_clock::now();
+        while (!request_complete) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+            auto elapsed = std::chrono::steady_clock::now() - start;
+            if (std::chrono::duration_cast<std::chrono::milliseconds>(elapsed).count() > timeout_ms) {
+                request_thread.detach();
+                return "";
+            }
+        }
+        request_thread.join();
+        if (!error_msg.empty()) return "";
+        if (!stream_state.full_content.empty()) {
+            return clean_response(stream_state.full_content);
+        }
+        return "";
+    }
+
+private:
     LLMConfig config_;
     bool ready_;
     bool is_ollama_;
@@ -604,9 +755,11 @@ LLMClient::~LLMClient() = default;
 LLMResponse LLMClient::generate_with_tools(const std::string& prompt,
                                           const std::string& tool_definitions_json,
                                           const std::vector<std::string>& conversation_history,
-                                          int timeout_ms, int max_tokens) {
+                                          int timeout_ms, int max_tokens,
+                                          const std::string& model_override,
+                                          const std::string& system_prompt_override) {
     return pimpl_->generate_with_tools(prompt, tool_definitions_json, conversation_history,
-                                      timeout_ms, max_tokens, "");
+                                      timeout_ms, max_tokens, model_override, system_prompt_override);
 }
 
 std::string LLMClient::clarify_user_message(const std::string& raw_user_message,
@@ -617,6 +770,18 @@ std::string LLMClient::clarify_user_message(const std::string& raw_user_message,
 
 std::string LLMClient::summarize_conversation(const std::string& conversation_text, int timeout_ms) {
     return pimpl_->summarize_conversation(conversation_text, timeout_ms);
+}
+
+std::string LLMClient::generate_ollama_chat_stream(
+    const std::string& prompt,
+    const std::vector<std::string>& conversation_history,
+    int timeout_ms,
+    int max_tokens,
+    const std::string& model_override,
+    const std::string& system_prompt_override,
+    StreamContentCallback on_delta) {
+    return pimpl_->generate_ollama_chat_stream(prompt, conversation_history,
+        timeout_ms, max_tokens, model_override, system_prompt_override, std::move(on_delta));
 }
 
 std::string LLMClient::generate(const std::string& prompt, const std::string& context,

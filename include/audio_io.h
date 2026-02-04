@@ -52,6 +52,14 @@ public:
      * @return True if queued successfully
      */
     bool play(const AudioBuffer& buffer);
+
+    /**
+     * @brief Append audio buffer to current playback queue (for streaming TTS).
+     * Does not clear the queue; use after play() to add more audio.
+     * @param buffer Audio samples to append
+     * @return True if queued successfully
+     */
+    bool append_playback(const AudioBuffer& buffer);
     
     /**
      * @brief Check if playback queue is empty and playback complete

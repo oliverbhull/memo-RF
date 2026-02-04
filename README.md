@@ -24,8 +24,9 @@ Single C++ binary with modular components:
 - **PortAudio** (libportaudio2-dev on Ubuntu, portaudio via Homebrew on Mac)
 - **whisper.cpp** (source code repository, must be built)
   - Clone: `git clone https://github.com/ggerganov/whisper.cpp.git`
-  - Build: `cd whisper.cpp && make`
+  - Build: `cd whisper.cpp && make` (on macOS, use `make GGML_METAL=1` for Metal GPU acceleration and lower STT latency)
   - The build should create `libwhisper.a` or `libwhisper.dylib` in the whisper.cpp directory
+  - **Low latency on Mac:** Build whisper.cpp with Metal support so STT uses the GPU. If your build has no Metal, set `stt.use_gpu` to `false` in config to avoid startup errors.
 - **nlohmann/json** (header-only library)
 - **libcurl** (for LLM HTTP client)
 - **Piper** TTS (external binary; set `tts.piper_path` in config or ensure in PATH)
@@ -98,6 +99,12 @@ See `docs/JETSON_SETUP.md` for a concise Jetson setup and transfer steps.
    - `tts.piper_path`: Optional; Piper binary path (empty = auto-detect). Set on Linux/Jetson if piper is not in PATH.
    - `tts.espeak_data_path`: Optional; espeak-ng data dir (empty = platform default: `/usr/share/espeak-ng-data` on Linux, `/opt/homebrew/share/espeak-ng-data` on macOS)
    - `llm.endpoint`: LLM server endpoint (default: http://localhost:8080/completion)
+   - `llm.translation_model`: Optional. When `llm.agent_persona` is `"translator"`, set this (e.g. `"translategemma"`) to use a dedicated translation model for lower latency. Run `ollama pull translategemma` first. If empty, the main `llm.model_name` is used.
+   - `stt.use_gpu`: When true (default), Whisper uses Metal on macOS if the whisper.cpp build supports it. Set to false if your whisper.cpp was built without Metal.
+   - `vad.silence_threshold`: RMS below this (e.g. 0.02) counts as silence; frames between this and `vad.threshold` are speech dips and reset the silence counter. Lower = stricter silence; slightly higher for noisier environments.
+   - `vad.start_frames_required`: Consecutive speech frames required to trigger SpeechStart (default 2; reduces false start on pops).
+   - `llm.keep_alive_sec`: (Ollama) Seconds to keep model in memory after each request (0 = default; e.g. 300 to avoid load_duration on subsequent requests).
+   - `llm.warmup_translation_model`: When true and `llm.translation_model` is set, send one tiny request at startup to load the model (Ollama only); first user request then avoids load_duration.
    - Audio device names if not using "default"
    - `wake_word.enabled`: When true (default), the agent responds only when the transcript contains "hey memo"; when false, it responds to every utterance (legacy).
    - `tx.channel_clear_silence_ms`: Half-duplex: wait this many ms of silence after the last speech before keying up (default 500). See `docs/WAKE_WORD.md`.
@@ -114,6 +121,9 @@ You can swap the agent’s role by name instead of editing the system prompt. Se
 - **Built-in ids (examples):** Business — `manufacturing`, `retail`, `hospitality`, `healthcare`, `security`, `warehouse`, `construction`, `film_production`, `ski_patrol`, `theme_park`, `airline_ramp`, `maritime`, `wildland_fire`, `school_admin`, `golf_course`. Demo — `ems_dispatch`, `pit_crew`, `mission_control`, `food_truck_rally`. Fun — `trucker_cb`, `submarine`, `detective_noir`, `drill_sergeant`, `butler`, `surfer`, `astronaut`, `ghost_hunters`, `zombie_survivor`, `sports_coach`, `wedding_planner`, `ranch_hand`, `asshole`. See `config/personas.json` for the full list.
 - **Example:** In `config.json`, set `"agent_persona": "manufacturing"` under `llm`. Omit `agent_persona` to use the inline `system_prompt` as before.
 - **Response language:** Set `llm.response_language` to `"es"`, `"fr"`, or `"de"` to have any persona respond in that language; the Piper voice is chosen automatically from `config/language_voices.json`. See `docs/VOICE_CONFIG.md`.
+- **Translator persona (low latency):** For the translator persona, set `llm.translation_model` to `translategemma` in config and run `ollama pull translategemma`. The agent will use this dedicated translation model instead of the general-purpose LLM for faster, translation-only responses.
+
+**Low latency (translator):** To reduce time-to-first-audio when using the translator persona: set `llm.keep_alive_sec` (e.g. 300) so the model stays loaded; set `llm.warmup_translation_model` to `true` so the first request doesn't pay load_duration; set `vad.end_of_utterance_silence_ms` (e.g. 350–450) and `vad.silence_threshold` (e.g. 0.02); optionally set `tts.vox_preroll_ms` (e.g. 200) to trade a bit of VOX margin for faster first audio; add short Spanish phrases to `tts.preload_phrases` (e.g. "Un momento.", "over.") so fallbacks can hit the TTS cache. See `config/config.json.example` for a reference.
 
 ### Finding Audio Devices
 
@@ -184,7 +194,6 @@ Pre-configured fast responses (no LLM):
 
 - GPIO PTT control (replace VOX)
 - Streaming STT partials
-- Streaming LLM tokens
 - Multi-turn memory
 - Pi AI HAT+ 2 Hailo Ollama backend
 

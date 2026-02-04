@@ -109,6 +109,7 @@ struct ToolsConfig {
  * @brief Conversation memory configuration
  */
 struct MemoryConfig {
+    bool enabled = true;
     size_t max_messages = constants::memory::MAX_HISTORY_MESSAGES;
     size_t max_tokens = constants::memory::MAX_HISTORY_TOKENS;
     std::string system_prompt = "You are a military field operator on tactical radio. "

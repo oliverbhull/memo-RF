@@ -18,6 +18,9 @@ public:
     
     // Transmit audio buffer (triggers VOX)
     void transmit(const AudioBuffer& buffer);
+
+    // Append audio to current transmission (for streaming TTS). Call after transmit().
+    void transmit_append(const AudioBuffer& buffer);
     
     // Check if currently transmitting
     bool is_transmitting() const;

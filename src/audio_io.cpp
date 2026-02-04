@@ -349,6 +349,25 @@ public:
         
         return true;
     }
+
+    bool append_playback(const AudioBuffer& buffer) {
+        std::lock_guard<std::mutex> lock(playback_mutex_);
+        bool was_empty = playback_queue_.empty();
+        for (size_t i = 0; i < buffer.size(); i += SAMPLES_PER_FRAME) {
+            AudioFrame frame;
+            size_t remaining = buffer.size() - i;
+            size_t frame_size = (remaining < SAMPLES_PER_FRAME) ? remaining : SAMPLES_PER_FRAME;
+            frame.assign(buffer.begin() + i, buffer.begin() + i + frame_size);
+            if (frame.size() < SAMPLES_PER_FRAME) {
+                frame.resize(SAMPLES_PER_FRAME, 0);
+            }
+            playback_queue_.push(frame);
+        }
+        if (was_empty && !playback_queue_.empty()) {
+            playback_complete_ = false;
+        }
+        return true;
+    }
     
     bool is_playback_complete() const {
         std::lock_guard<std::mutex> lock(playback_mutex_);
@@ -637,6 +656,10 @@ bool AudioIO::read_frame(AudioFrame& frame) {
 
 bool AudioIO::play(const AudioBuffer& buffer) {
     return pimpl_->play(buffer);
+}
+
+bool AudioIO::append_playback(const AudioBuffer& buffer) {
+    return pimpl_->append_playback(buffer);
 }
 
 bool AudioIO::is_playback_complete() const {

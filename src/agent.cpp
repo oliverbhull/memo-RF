@@ -83,9 +83,6 @@ public:
         
         Logger::info("Audio I/O started successfully");
         
-        // Preload "Standby, over" so first speech-end ack is instant (cache hit)
-        tts_->preload_phrase("Standby, over");
-        
         // Start session recording
         Logger::info("Starting session recording...");
         recorder_->start_session();
@@ -116,20 +113,40 @@ public:
         }
         Logger::info("Tool system initialized with " + std::to_string(tool_registry_->size()) + " tools");
 
-        // Session conversation memory for multi-turn context
-        memory::ConversationConfig mem_config;
-        mem_config.system_prompt = config_.llm.system_prompt;
-        mem_config.max_messages = constants::memory::MAX_HISTORY_MESSAGES;
-        mem_config.max_tokens = constants::memory::MAX_HISTORY_TOKENS;
-        session_memory_ = std::make_unique<memory::ConversationMemory>(mem_config);
-        Logger::info("Session memory enabled (max " + std::to_string(mem_config.max_messages) + " messages)");
+        // Session conversation memory for multi-turn context (optional)
+        if (config_.memory.enabled) {
+            memory::ConversationConfig mem_config;
+            mem_config.system_prompt = config_.llm.system_prompt;
+            mem_config.max_messages = config_.memory.max_messages;
+            mem_config.max_tokens = config_.memory.max_tokens;
+            session_memory_ = std::make_unique<memory::ConversationMemory>(mem_config);
+            Logger::info("Session memory enabled (max " + std::to_string(mem_config.max_messages) + " messages)");
+        } else {
+            Logger::info("Session memory disabled");
+        }
 
         // Dedicated LLM client for background summarization (same config, separate instance for thread safety)
         summarizer_llm_ = std::make_unique<LLMClient>(config_.llm);
         worker_shutdown_ = false;
         worker_thread_ = std::thread(&Impl::summarizer_worker_loop, this);
         Logger::info("Background context summarizer started");
-        
+
+        // Optional: warmup translation model so first user request avoids load_duration (Ollama only)
+        if (config_.llm.warmup_translation_model && !config_.llm.translation_model.empty()
+            && config_.llm.endpoint.find("/api/chat") != std::string::npos) {
+            std::string lang = config_.llm.response_language.empty() ? "Spanish" : config_.llm.response_language;
+            if (lang == "es") lang = "Spanish";
+            else if (lang == "fr") lang = "French";
+            else if (lang == "de") lang = "German";
+            std::string warmup_prompt = "You are a professional English to " + lang + " translator. "
+                "Output only the " + lang + " translation, no explanations. End transmissions with \"over\".";
+            std::vector<std::string> empty_history;
+            LLMResponse warmup_r = llm_->generate_with_tools("Hi", "", empty_history,
+                config_.llm.timeout_ms, 5, config_.llm.translation_model, warmup_prompt);
+            (void)warmup_r;
+            Logger::info("Translation model warmup complete");
+        }
+
         initialized_ = true;
         return true;
     }
@@ -504,32 +521,13 @@ private:
             if (response_audio.empty()) {
                 return;
             }
-            const std::string standby = "Standby, over";
             AudioBuffer preroll = tts_->get_preroll_buffer();
-            AudioBuffer standby_speech = tts_->synth(standby);
             pending_response_audio_.clear();
-            pending_response_audio_.reserve(preroll.size() + standby_speech.size() + response_audio.size());
+            pending_response_audio_.reserve(preroll.size() + response_audio.size());
             pending_response_audio_.insert(pending_response_audio_.end(), preroll.begin(), preroll.end());
-            pending_response_audio_.insert(pending_response_audio_.end(), standby_speech.begin(), standby_speech.end());
             pending_response_audio_.insert(pending_response_audio_.end(), response_audio.begin(), response_audio.end());
             state_machine_->on_response_ready(pending_response_audio_);
             return;
-        }
-
-        // Legacy: respond to every utterance; send standby immediately then process
-        if (config_.tx.standby_delay_ms > 0) {
-            std::this_thread::sleep_for(std::chrono::milliseconds(config_.tx.standby_delay_ms));
-        }
-        {
-            vad_->reset();
-            const std::string standby = "Standby, over";
-            AudioBuffer preroll = tts_->get_preroll_buffer();
-            AudioBuffer standby_speech = tts_->synth(standby);
-            AudioBuffer standby_audio;
-            standby_audio.reserve(preroll.size() + standby_speech.size());
-            standby_audio.insert(standby_audio.end(), preroll.begin(), preroll.end());
-            standby_audio.insert(standby_audio.end(), standby_speech.begin(), standby_speech.end());
-            tx_->transmit(standby_audio);
         }
 
         bool twitter_handled = false;
@@ -616,7 +614,7 @@ private:
         
         // Bounded context: only send last N turns to avoid "lost in the middle" (Mistral)
         size_t max_turns = static_cast<size_t>(std::max(1, config_.llm.context_max_turns_to_send));
-        std::vector<std::string> session_history = session_memory_->to_json_strings_recent(max_turns);
+        std::vector<std::string> session_history = session_memory_ ? session_memory_->to_json_strings_recent(max_turns) : std::vector<std::string>{};
         // Prepend conversation summary from background summarizer (primacy for Mistral)
         {
             std::lock_guard<std::mutex> lock(summary_mutex_);
@@ -635,7 +633,7 @@ private:
         bool skip_clarifier = utils::is_blank_transcript(raw_prompt, config_.stt.blank_sentinel)
             || static_cast<int>(utils::trim_copy(raw_prompt).size()) < config_.clarifier.min_chars
             || transcript.confidence < config_.clarifier.min_confidence;
-        if (session_memory_->message_count() >= 2 && !skip_clarifier) {
+        if (session_memory_ && session_memory_->message_count() >= 2 && !skip_clarifier) {
             std::string clarified = llm_->clarify_user_message(raw_prompt, session_history,
                                                               config_.llm.timeout_ms,
                                                               config_.clarifier.min_chars);
@@ -660,7 +658,7 @@ private:
                 LOG_LLM(std::string("Context clarified: \"") + raw_prompt + "\" -> \"" + clarified + "\"");
                 llm_prompt = clarified;
             }
-        } else if (session_memory_->message_count() >= 2 && skip_clarifier) {
+        } else if (session_memory_ && session_memory_->message_count() >= 2 && skip_clarifier) {
             LOG_TRACE(utterance_id, "clarifier", "skipped");
         }
         
@@ -672,27 +670,125 @@ private:
         
         LOG_LLM(std::string("Calling LLM with prompt: \"") + llm_prompt + "\"");
         
+        // Translator path: use dedicated translation model when configured
+        bool use_translation_model = (config_.llm.agent_persona == "translator"
+                                      && !config_.llm.translation_model.empty());
+        std::string translation_system_prompt;
+        std::vector<std::string> llm_history = session_history;
+        std::string model_override;
+        std::string system_prompt_override;
+        if (use_translation_model) {
+            model_override = config_.llm.translation_model;
+            std::string lang = config_.llm.response_language.empty() ? "Spanish" : config_.llm.response_language;
+            if (lang == "es") lang = "Spanish";
+            else if (lang == "fr") lang = "French";
+            else if (lang == "de") lang = "German";
+            translation_system_prompt = "You are a professional English to " + lang + " translator. "
+                "Output only the " + lang + " translation, no explanations. End transmissions with \"over\".";
+            system_prompt_override = translation_system_prompt;
+            llm_history.clear();  // Translation is stateless: single user message only
+        }
+        
         // Main LLM loop with tool execution (only if tools are enabled)
         std::string llm_response;
         std::string llm_stop_reason;
         
         if (tool_definitions.empty()) {
-            // No tools enabled - use simple direct LLM call with session history
+            // Streaming path: Ollama only, no tools, not waiting for channel clear
+            bool use_streaming = false;  // Disabled: full response then single TTS (smoother playback)
+            if (use_streaming) {
+                std::string stream_buffer;
+                bool first_sentence_sent = false;
+                AudioBuffer full_response_audio;
+                auto on_delta = [this, &stream_buffer, &first_sentence_sent, &full_response_audio](
+                                    const std::string& delta) {
+                    stream_buffer += delta;
+                    for (;;) {
+                        // For first chunk only: try short phrase (comma / 5 words / 20 chars) for lower latency
+                        std::string chunk = first_sentence_sent
+                            ? extract_first_sentence(stream_buffer)
+                            : extract_first_phrase(stream_buffer);
+                        if (chunk.empty())
+                            chunk = extract_first_sentence(stream_buffer);
+                        if (chunk.empty()) break;
+                        std::string chunk_text = utils::trim_copy(chunk);
+                        if (chunk_text.empty()) continue;
+                        if (!first_sentence_sent) {
+                            first_sentence_sent = true;
+                            AudioBuffer first_audio = tts_->synth_vox(chunk_text);
+                            full_response_audio = first_audio;
+                            state_machine_->on_response_ready(first_audio);
+                            vad_->reset();
+                            tx_->transmit(first_audio);
+                        } else {
+                            AudioBuffer chunk_audio = tts_->synth(chunk_text);
+                            full_response_audio.insert(full_response_audio.end(),
+                                                       chunk_audio.begin(), chunk_audio.end());
+                            tx_->transmit_append(chunk_audio);
+                        }
+                    }
+                };
+                llm_response = llm_->generate_ollama_chat_stream(
+                    llm_prompt, llm_history,
+                    config_.llm.timeout_ms, config_.llm.max_tokens,
+                    model_override, system_prompt_override, on_delta);
+                llm_stop_reason = "stop";
+                // Flush remainder
+                std::string remainder = utils::trim_copy(stream_buffer);
+                if (!remainder.empty()) {
+                    if (!first_sentence_sent) {
+                        AudioBuffer first_audio = tts_->synth_vox(remainder);
+                        full_response_audio = first_audio;
+                        state_machine_->on_response_ready(first_audio);
+                        vad_->reset();
+                        tx_->transmit(first_audio);
+                    } else {
+                        AudioBuffer chunk_audio = tts_->synth(remainder);
+                        full_response_audio.insert(full_response_audio.end(),
+                                                   chunk_audio.begin(), chunk_audio.end());
+                        tx_->transmit_append(chunk_audio);
+                    }
+                }
+                if (llm_response.empty()) {
+                    llm_response = (config_.llm.response_language == "es")
+                        ? "Un momento."
+                        : config_.llm.truncation.fallback_phrase;
+                }
+                if (session_memory_) {
+                    session_memory_->add_user_message(llm_prompt);
+                    session_memory_->add_assistant_message(llm_response);
+                }
+                recorder_->record_llm_response(llm_response, utterance_id);
+                recorder_->record_tts_output(full_response_audio, utterance_id);
+                if (session_memory_ && session_memory_->message_count() >= 4) {
+                    std::vector<std::string> snapshot = session_memory_->to_json_strings();
+                    { std::lock_guard<std::mutex> lock(job_mutex_); pending_snapshot_ = std::move(snapshot); }
+                    job_cv_.notify_one();
+                }
+                return;
+            }
+            // No tools enabled - use simple direct LLM call with session history (or translation path)
             LLMResponse response = llm_->generate_with_tools(
                 llm_prompt,
                 "",  // No tool definitions
-                session_history,
+                llm_history,
                 config_.llm.timeout_ms,
-                config_.llm.max_tokens
+                config_.llm.max_tokens,
+                model_override,
+                system_prompt_override
             );
             llm_stop_reason = response.stop_reason;
             llm_response = response.content;
             if (response.stop_reason == "length") {
                 LOG_LLM("Truncated response (done_reason=length), using fallback");
-                llm_response = config_.llm.truncation.fallback_phrase;
+                llm_response = (config_.llm.response_language == "es")
+                    ? "Un momento."
+                    : config_.llm.truncation.fallback_phrase;
             }
-            session_memory_->add_user_message(llm_prompt);
-            session_memory_->add_assistant_message(llm_response);
+            if (session_memory_) {
+                session_memory_->add_user_message(llm_prompt);
+                session_memory_->add_assistant_message(llm_response);
+            }
         } else {
             // Tools enabled - use tool execution loop with session history + current turn
             std::vector<std::string> conversation_history = session_history;
@@ -712,7 +808,9 @@ private:
                     tool_definitions,
                     conversation_history,
                     config_.llm.timeout_ms,
-                    config_.llm.max_tokens
+                    config_.llm.max_tokens,
+                    "",  // No model override when tools enabled
+                    ""
                 );
                 
                 // Add assistant message to conversation
@@ -741,11 +839,15 @@ private:
                         llm_response = response.content;
                         if (response.stop_reason == "length") {
                             LOG_LLM("Truncated response (done_reason=length), using fallback");
-                            llm_response = config_.llm.truncation.fallback_phrase;
+                            llm_response = (config_.llm.response_language == "es")
+                                ? "Un momento."
+                                : config_.llm.truncation.fallback_phrase;
                         }
                     } else {
                         // Empty response, use fallback
-                        llm_response = "Stand by.";
+                        llm_response = (config_.llm.response_language == "es")
+                            ? "Un momento."
+                            : config_.llm.truncation.fallback_phrase;
                     }
                     break;
                 }
@@ -780,10 +882,14 @@ private:
             // If we hit max iterations, use last response or fallback
             if (iteration >= max_iterations && llm_response.empty()) {
                 LOG_LLM("Max tool execution iterations reached");
-                llm_response = "Stand by.";
+                llm_response = (config_.llm.response_language == "es")
+                    ? "Un momento."
+                    : config_.llm.truncation.fallback_phrase;
             }
-            session_memory_->add_user_message(llm_prompt);
-            session_memory_->add_assistant_message(llm_response);
+            if (session_memory_) {
+                session_memory_->add_user_message(llm_prompt);
+                session_memory_->add_assistant_message(llm_response);
+            }
         }
         
         auto llm_end = std::chrono::steady_clock::now();
@@ -806,7 +912,9 @@ private:
         std::string trimmed_response = utils::trim_copy(llm_response);
         if (trimmed_response.empty() || utils::is_empty_or_whitespace(trimmed_response)) {
             LOG_LLM("Empty response, using fallback");
-            llm_response = "Stand by.";
+            llm_response = (config_.llm.response_language == "es")
+                ? "Un momento."
+                : config_.llm.truncation.fallback_phrase;
         }
         
         // Synthesize response (ensure transmission ends with " over.")
@@ -824,7 +932,7 @@ private:
         }
         recorder_->record_tts_output(response_audio, utterance_id);
         if (wait_for_channel_clear) {
-            if (session_memory_->message_count() >= 4) {
+            if (session_memory_ && session_memory_->message_count() >= 4) {
                 std::vector<std::string> snapshot = session_memory_->to_json_strings();
                 {
                     std::lock_guard<std::mutex> lock(job_mutex_);
@@ -838,7 +946,7 @@ private:
         vad_->reset();
         LOG_TX("Transmitting response (" + std::to_string(response_audio.size()) + " samples)...");
         tx_->transmit(response_audio);
-        if (session_memory_->message_count() >= 4) {
+        if (session_memory_ && session_memory_->message_count() >= 4) {
             std::vector<std::string> snapshot = session_memory_->to_json_strings();
             {
                 std::lock_guard<std::mutex> lock(job_mutex_);
@@ -912,6 +1020,95 @@ private:
                 LOG_LLM("Context summary updated");
             }
         }
+    }
+
+    // Extract first short phrase for low-latency first chunk only (comma, 5 words, or 20 chars).
+    // Returns empty if we should wait for more.
+    static std::string extract_first_phrase(std::string& buffer) {
+        const size_t MIN_PHRASE_CHARS = 20;
+        const size_t MIN_PHRASE_WORDS = 5;
+        std::string trimmed = utils::trim_copy(buffer);
+        if (trimmed.empty()) return "";
+        // Count words (space-separated)
+        size_t word_count = 0;
+        size_t i = 0;
+        while (i < trimmed.size()) {
+            while (i < trimmed.size() && (trimmed[i] == ' ' || trimmed[i] == '\n')) ++i;
+            if (i >= trimmed.size()) break;
+            ++word_count;
+            while (i < trimmed.size() && trimmed[i] != ' ' && trimmed[i] != '\n') ++i;
+        }
+        // First comma with at least 2 words before it -> emit up to comma
+        size_t comma = buffer.find(',');
+        if (comma != std::string::npos) {
+            std::string before = buffer.substr(0, comma);
+            size_t spaces = 0;
+            for (char c : before) { if (c == ' ' || c == '\n') ++spaces; }
+            if (spaces >= 1) {  // at least 2 words
+                std::string phrase = buffer.substr(0, comma + 1);
+                buffer.erase(0, comma + 1);
+                return phrase;
+            }
+        }
+        // At least 5 words -> emit first 5 words
+        if (word_count >= MIN_PHRASE_WORDS) {
+            size_t pos = 0;
+            int w = 0;
+            while (pos < buffer.size() && w < static_cast<int>(MIN_PHRASE_WORDS)) {
+                while (pos < buffer.size() && (buffer[pos] == ' ' || buffer[pos] == '\n')) ++pos;
+                if (pos >= buffer.size()) break;
+                ++w;
+                while (pos < buffer.size() && buffer[pos] != ' ' && buffer[pos] != '\n') ++pos;
+            }
+            if (w == static_cast<int>(MIN_PHRASE_WORDS)) {
+                std::string phrase = buffer.substr(0, pos);
+                buffer.erase(0, pos);
+                return phrase;
+            }
+        }
+        // At least 20 chars -> emit first 20 (to last space)
+        if (buffer.size() >= MIN_PHRASE_CHARS) {
+            size_t last_space = std::string::npos;
+            for (size_t j = 0; j < MIN_PHRASE_CHARS && j < buffer.size(); ++j) {
+                if (buffer[j] == ' ' || buffer[j] == '\n') last_space = j;
+            }
+            size_t end = (last_space != std::string::npos) ? last_space : (MIN_PHRASE_CHARS - 1);
+            std::string phrase = buffer.substr(0, end + 1);
+            buffer.erase(0, end + 1);
+            return phrase;
+        }
+        return "";
+    }
+
+    // Extract first complete sentence from stream buffer; remove it from buffer.
+    // Sentence = first . ! ? (followed by space/newline/end), or first newline, or first ~40 chars.
+    static std::string extract_first_sentence(std::string& buffer) {
+        const size_t MIN_SENTENCE_CHARS = 40;
+        size_t end_pos = std::string::npos;
+        for (size_t i = 0; i < buffer.size(); ++i) {
+            char c = buffer[i];
+            if (c == '.' || c == '!' || c == '?') {
+                if (i + 1 >= buffer.size() || buffer[i + 1] == ' ' || buffer[i + 1] == '\n' || buffer[i + 1] == '\r') {
+                    end_pos = i;
+                    break;
+                }
+            }
+            if (c == '\n') {
+                if (end_pos == std::string::npos || i < end_pos) end_pos = i;
+                break;
+            }
+        }
+        if (end_pos == std::string::npos && buffer.size() >= MIN_SENTENCE_CHARS) {
+            size_t last_space = std::string::npos;
+            for (size_t i = 0; i < MIN_SENTENCE_CHARS && i < buffer.size(); ++i) {
+                if (buffer[i] == ' ' || buffer[i] == '\n') last_space = i;
+            }
+            end_pos = (last_space != std::string::npos) ? last_space : (MIN_SENTENCE_CHARS - 1);
+        }
+        if (end_pos == std::string::npos) return "";
+        std::string sentence = buffer.substr(0, end_pos + 1);
+        buffer.erase(0, end_pos + 1);
+        return sentence;
     }
 
     static std::string format_snapshot_for_summary(const std::vector<std::string>& snapshot) {

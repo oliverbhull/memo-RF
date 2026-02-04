@@ -16,9 +16,9 @@ public:
             return;
         }
         
-        // Initialize whisper
+        // Initialize whisper (Metal GPU on macOS when whisper.cpp built with GGML_METAL)
         struct whisper_context_params cparams = whisper_context_default_params();
-        cparams.use_gpu = false; // v1: CPU only
+        cparams.use_gpu = config_.use_gpu;
         
         ctx_ = whisper_init_from_file_with_params(config_.model_path.c_str(), cparams);
         if (!ctx_) {

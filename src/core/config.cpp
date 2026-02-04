@@ -129,6 +129,7 @@ MemoryConfig parse_memory_config(const json& j) {
     if (!j.contains("memory")) return config;
 
     const auto& memory = j["memory"];
+    config.enabled = get_or_default(memory, "enabled", config.enabled);
     config.max_messages = get_or_default(memory, "max_messages", config.max_messages);
     config.max_tokens = get_or_default(memory, "max_tokens", config.max_tokens);
     config.system_prompt = get_or_default(memory, "system_prompt", config.system_prompt);
@@ -205,6 +206,7 @@ json tools_config_to_json(const ToolsConfig& config) {
 
 json memory_config_to_json(const MemoryConfig& config) {
     return {
+        {"enabled", config.enabled},
         {"max_messages", config.max_messages},
         {"max_tokens", config.max_tokens},
         {"system_prompt", config.system_prompt},

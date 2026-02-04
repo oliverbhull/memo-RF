@@ -14,6 +14,10 @@ struct AudioConfig {
 
 struct VADConfig {
     float threshold = 0.5f;
+    /// RMS below this counts as silence; frames between this and threshold are speech dips (reset silence)
+    float silence_threshold = 0.02f;
+    /// Consecutive speech frames required to trigger SpeechStart (reduces false start on pops)
+    int start_frames_required = 2;
     int end_of_utterance_silence_ms = 1000;  // Silence duration before ending utterance
     int min_speech_ms = 200;                  // Minimum speech duration to be valid
     int hangover_ms = 200;                    // Grace period after speech end
@@ -25,6 +29,7 @@ struct STTConfig {
     std::string model_path;
     std::string language = "en";
     std::string blank_sentinel = "[BLANK_AUDIO]";  ///< Treat this exact string (after trim) as blank
+    bool use_gpu = true;  ///< Use Metal/GPU when available (whisper.cpp must be built with Metal)
 };
 
 /// Transcript gate: block router/clarifier/memory when transcript is low-signal
@@ -61,9 +66,15 @@ struct LLMTruncationConfig {
 struct LLMConfig {
     std::string endpoint = "http://localhost:8080/completion";
     int timeout_ms = 2000;
-    int max_tokens = 100;
+    int max_tokens = 0;  ///< 0 = no limit (generate until stop)
     int context_max_turns_to_send = 6;  ///< Only send last N turns to LLM (bounded context)
+    /// Ollama: seconds to keep model in memory after request (0 = default; positive = keep loaded)
+    int keep_alive_sec = 0;
     std::string model_name = "qwen";
+    /// When set and agent_persona is translator, use this model with translation-only prompt (e.g. translategemma)
+    std::string translation_model;
+    /// If true and translation_model set, send one tiny request at startup to load model (Ollama only)
+    bool warmup_translation_model = false;
     float temperature = 0.7f;
     std::vector<std::string> stop_sequences = {"</s>", "\n\n", "User:", "Human:"};
     /// If set, system_prompt is resolved from config/personas.json; persona wins over inline system_prompt
@@ -107,6 +118,13 @@ struct ToolsConfig {
     size_t max_concurrent = 1;          // Maximum concurrent tool executions
 };
 
+/// Conversation memory: when enabled, session history is kept for multi-turn context.
+struct MemoryConfig {
+    bool enabled = true;
+    size_t max_messages = 20;
+    size_t max_tokens = 2000;
+};
+
 struct Config {
     AudioConfig audio;
     VADConfig vad;
@@ -119,6 +137,7 @@ struct Config {
     TTSConfig tts;
     TXConfig tx;
     ToolsConfig tools;
+    MemoryConfig memory;
     WakeWordConfig wake_word;
     
     std::string session_log_dir = "sessions";

@@ -5,6 +5,7 @@
 #include <string>
 #include <memory>
 #include <vector>
+#include <functional>
 
 namespace memo_rf {
 
@@ -40,11 +41,12 @@ public:
     /**
      * @brief Generate response with tool support
      * @param prompt User prompt
-     * @param context Optional context
      * @param tool_definitions_json JSON array of tool definitions (empty = no tools)
      * @param conversation_history Previous messages in conversation (for multi-turn)
      * @param timeout_ms Timeout in ms (0 = use config default)
      * @param max_tokens Max tokens (0 = use config default)
+     * @param model_override When non-empty, use this model instead of config (e.g. translation model)
+     * @param system_prompt_override When non-empty, use this system prompt instead of config
      * @return LLMResponse with content and/or tool calls
      */
     LLMResponse generate_with_tools(
@@ -52,7 +54,9 @@ public:
         const std::string& tool_definitions_json = "",
         const std::vector<std::string>& conversation_history = {},
         int timeout_ms = 0,
-        int max_tokens = 0);
+        int max_tokens = 0,
+        const std::string& model_override = "",
+        const std::string& system_prompt_override = "");
     
     /**
      * @brief Generate response (legacy method, for backward compatibility)
@@ -100,6 +104,26 @@ public:
     std::string summarize_conversation(
         const std::string& conversation_text,
         int timeout_ms = 0);
+
+    /**
+     * @brief Callback for streaming content deltas (Ollama stream).
+     * Called with each new content fragment; final call may have empty delta when stream ends.
+     */
+    using StreamContentCallback = std::function<void(const std::string& content_delta)>;
+
+    /**
+     * @brief Generate Ollama chat response with streaming (no tools).
+     * Only supported when endpoint is Ollama (/api/chat). Streams content via on_delta.
+     * @return Full accumulated content (cleaned), or empty on error/timeout.
+     */
+    std::string generate_ollama_chat_stream(
+        const std::string& prompt,
+        const std::vector<std::string>& conversation_history,
+        int timeout_ms,
+        int max_tokens,
+        const std::string& model_override,
+        const std::string& system_prompt_override,
+        StreamContentCallback on_delta);
     
     // Check if client is ready
     bool is_ready() const;

@@ -5,13 +5,13 @@
     "sample_rate": 16000
   },
   "vad": {
-    "threshold": 0.05,
+    "threshold": 0.09,
+    "silence_threshold": 0.02,
+    "start_frames_required": 2,
     "min_speech_ms": 200,
-    "end_of_utterance_silence_ms": 350,
+    "end_of_utterance_silence_ms": 450,
     "hangover_ms": 50,
-    "pause_tolerance_ms": 150,
-    "pre_speech_buffer_ms": 300,
-    "adaptive_threshold": true,
+    "pause_tolerance_ms": 250,
     "debug_log_rms_each_frame": false
   },
   "stt": {
@@ -43,6 +43,8 @@
     "timeout_ms": 30000,
     "max_tokens": 100,
     "context_max_turns_to_send": 6,
+    "keep_alive_sec": 300,
+    "warmup_translation_model": false,
     "temperature": 0.3,
     "agent_persona": "manufacturing",
     "response_language": "",
@@ -66,7 +68,8 @@
       "negative.",
       "stand by.",
       "copy.",
-      "over."
+      "over.",
+      "Un momento."
     ]
   },
   "tx": {

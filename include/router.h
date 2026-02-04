@@ -29,15 +29,15 @@ struct Plan {
 
 /**
  * @brief Router for deciding response strategy
- * 
- * Routes transcripts to either fast-path responses (keyword matching)
- * or LLM-based responses. Supports configurable fast-path rules.
+ *
+ * Routes transcripts to LLM-based responses. Low-confidence transcripts
+ * can return a repair plan (e.g. "Say again, over") without calling the LLM.
  */
 class Router {
 public:
     Router();
     ~Router();
-    
+
     /**
      * @brief Decide on response plan based on transcript (with confidence/repair)
      * @param transcript Full transcript (text, confidence, token_count)
@@ -53,13 +53,6 @@ public:
      * @brief Decide on response plan based on transcript text only (backward compatibility)
      */
     Plan decide(const std::string& transcript_text, const std::string& context = "");
-    
-    /**
-     * @brief Add fast-path rule for keyword matching
-     * @param pattern Keyword pattern to match (case-insensitive)
-     * @param response Response text to return if pattern matches
-     */
-    void add_fast_path_rule(const std::string& pattern, const std::string& response);
 
 private:
     class Impl;
