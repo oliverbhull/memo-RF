@@ -41,9 +41,6 @@ models/
 *.gguf
 *.ggml
 
-# User-specific config (use config.json.example as template)
-config/config.json
-
 # CMake cache
 CMakeCache.txt
 CMakeFiles/
