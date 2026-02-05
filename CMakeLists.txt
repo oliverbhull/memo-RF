@@ -174,31 +174,27 @@ endif()
 message(STATUS "Found whisper.h at: ${WHISPER_INCLUDE_DIR}")
 message(STATUS "Found whisper library at: ${WHISPER_LIB}")
 
-# Source files - Core (new architecture)
+# Source files - Core (stripped: no core/config, core/types)
 set(CORE_SOURCES
-    src/core/config.cpp
-    src/core/types.cpp
 )
 
-# Source files - VAD (new architecture)
+# Source files - VAD (stripped: use vad_endpointing only)
 set(VAD_SOURCES
-    src/vad/energy_vad.cpp
 )
 
-# Source files - TTS (new architecture)
+# Source files - TTS (stripped: use tts_engine only)
 set(TTS_SOURCES
-    src/tts/piper_tts.cpp
 )
 
-# Source files - Memory (new architecture)
+# Source files - Memory (stripped: no conversation_memory)
 set(MEMORY_SOURCES
-    src/memory/conversation_memory.cpp
 )
 
-# Source files - Legacy (existing code)
+# Source files - main application
 set(LEGACY_SOURCES
     src/main.cpp
     src/agent.cpp
+    src/agent_pipeline.cpp
     src/audio_io.cpp
     src/path_utils.cpp
     src/vad_endpointing.cpp
@@ -211,13 +207,6 @@ set(LEGACY_SOURCES
     src/session_recorder.cpp
     src/config.cpp
     src/logger.cpp
-    src/tool.cpp
-    src/tool_registry.cpp
-    src/tool_executor.cpp
-    src/tools/log_memo_tool.cpp
-    src/tools/external_research_tool.cpp
-    src/tools/internal_search_tool.cpp
-    src/twitter_flow.cpp
 )
 
 # All sources
@@ -229,35 +218,26 @@ set(SOURCES
     ${LEGACY_SOURCES}
 )
 
-# Header files - Core (new architecture)
+# Header files - Core (stripped)
 set(CORE_HEADERS
-    include/core/types.h
-    include/core/constants.h
-    include/core/config.h
-    include/core/ring_buffer.h
-    include/core/compat.h
 )
 
-# Header files - VAD (new architecture)
+# Header files - VAD (stripped)
 set(VAD_HEADERS
-    include/vad/vad_interface.h
-    include/vad/energy_vad.h
 )
 
-# Header files - TTS (new architecture)
+# Header files - TTS (stripped)
 set(TTS_HEADERS
-    include/tts/tts_interface.h
-    include/tts/piper_tts.h
 )
 
-# Header files - Memory (new architecture)
+# Header files - Memory (stripped)
 set(MEMORY_HEADERS
-    include/memory/conversation_memory.h
 )
 
-# Header files - Legacy (existing code)
+# Header files - main application
 set(LEGACY_HEADERS
     include/agent.h
+    include/agent_pipeline.h
     include/audio_io.h
     include/vad_endpointing.h
     include/stt_engine.h
@@ -272,14 +252,6 @@ set(LEGACY_HEADERS
     include/logger.h
     include/utils.h
     include/transcript_gate.h
-    include/errors.h
-    include/tool.h
-    include/tool_registry.h
-    include/tool_executor.h
-    include/tools/log_memo_tool.h
-    include/tools/external_research_tool.h
-    include/tools/internal_search_tool.h
-    include/twitter_flow.h
 )
 
 # All headers
