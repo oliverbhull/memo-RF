@@ -1,0 +1,23 @@
+[Unit]
+Description=Memo-RF voice agent (offline radio)
+After=network-online.target sound.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# Edit these paths if your repo is not in ~/dev/memo-RF
+WorkingDirectory=%h/dev/memo-RF
+ExecStart=%h/dev/memo-RF/build/memo-rf config/config.json
+Restart=on-failure
+RestartSec=5
+# Keep running after logout (only matters if user lingering is enabled)
+KillMode=mixed
+# Audio and display (optional, for Piper/ALSA)
+Environment=HOME=%h
+# Log to journal; also see sessions/ in project dir
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=memo-rf
+
+[Install]
+WantedBy=default.target

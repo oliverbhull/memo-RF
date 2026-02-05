@@ -7,10 +7,10 @@
   },
   "vad": {
     "threshold": 0.09,
-    "end_of_utterance_silence_ms": 450,
+    "end_of_utterance_silence_ms": 650,
     "min_speech_ms": 300,
     "hangover_ms": 50,
-    "pause_tolerance_ms": 250
+    "pause_tolerance_ms": 550
   },
   "stt": {
     "model_path": "~/models/whisper/ggml-small-q5_1.bin",

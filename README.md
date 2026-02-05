@@ -229,6 +229,7 @@ Additional documentation is available in the `docs/` folder:
 - `JETSON_SETUP.md` - Linux / Jetson Orin Nano setup and transfer
 - `NEXT_STEPS.md` - Future development plans
 - `RUNNING.md` - Running with agentic tools (Ollama, tools.enabled, troubleshooting)
+- `RUN_AS_SERVICE.md` - Run as a systemd user service (survive closing terminal / Jetson session)
 
 ## License
 
