@@ -6,7 +6,7 @@ Short guide to build and run memo-RF on Linux (Ubuntu) or Nvidia Jetson Orin Nan
 
 ```bash
 sudo apt-get update
-sudo apt-get install -y build-essential libportaudio2 libcurl4-openssl-dev pkg-config
+sudo apt-get install -y build-essential libportaudio2 portaudio19-dev libcurl4-openssl-dev pkg-config
 ```
 
 For nlohmann/json:
@@ -17,9 +17,69 @@ sudo apt-get install -y nlohmann-json3-dev
 
 If the package is not available, place `json.hpp` in `third_party/nlohmann/json.hpp` (see README).
 
-## 2. whisper.cpp
+## 2. CUDA on Jetson Orin Nano
 
-Clone and build (CPU; on Jetson you can enable CUDA if desired):
+To use the GPU for STT (whisper.cpp) and LLM (llama.cpp server) on a Jetson Orin Nano, build those projects with CUDA. memo-RF does not link CUDA directly; it uses whatever whisper library and llama-server you build.
+
+**Prerequisites:** JetPack with CUDA toolkit; CMake 3.15+ (3.18+ recommended to avoid ARM NEON + CUDA compile issues on Orin Nano). You can use `scripts/build_whisper_jetson_cuda.sh` and `scripts/build_llama_jetson_cuda.sh` from the memo-RF repo root to run the builds below.
+
+### whisper.cpp with CUDA
+
+Build **natively on the Jetson** (not cross-compile). Use CMake:
+
+```bash
+cd /path/to/whisper.cpp
+cmake -B build -DGGML_CUDA=1
+```
+
+If nvcc errors about GPU architecture, add `-DCMAKE_CUDA_ARCHITECTURES=87` (Orin Nano is compute capability 8.7):
+
+```bash
+cmake -B build -DGGML_CUDA=1 -DCMAKE_CUDA_ARCHITECTURES=87
+```
+
+Then:
+
+```bash
+cmake --build build
+```
+
+The library is produced under `build/` (e.g. `build/src/libwhisper.a` or a shared lib). Set `WHISPER_DIR` to the **source** directory of whisper.cpp (e.g. `/path/to/whisper.cpp`); memo-RF's CMake looks under `WHISPER_DIR/build/src`, `build`, etc.
+
+### llama.cpp with CUDA
+
+Build **natively on the Jetson** with the server enabled:
+
+```bash
+cd /path/to/llama.cpp
+cmake -B build -DLLAMA_BUILD_SERVER=ON
+```
+
+GGML_CUDA is usually auto-enabled when CUDA is found. If you need to force it or set the GPU arch:
+
+```bash
+cmake -B build -DLLAMA_BUILD_SERVER=ON -DGGML_CUDA=1 -DCMAKE_CUDA_ARCHITECTURES=87
+```
+
+Then:
+
+```bash
+cmake --build build --config Release
+```
+
+If the build fails with ARM NEON or CUDA-related errors, upgrading CMake (e.g. to 3.18+) often fixes it.
+
+### Config
+
+Set **stt.use_gpu** to `true` in `config/config.json` when whisper is built with CUDA (so STT uses the GPU). Set it to `false` if you use a CPU-only whisper build.
+
+### LLM server on Jetson (8GB)
+
+On an 8GB Orin Nano, use a conservative `--gpu-layers` value (e.g. 20–25 for Qwen 1.5B) to avoid OOM. The project script `scripts/start_server.sh` can detect Jetson and use a lower default; you can also start the server manually with e.g. `--gpu-layers 22`.
+
+## 3. whisper.cpp
+
+Clone and build (CPU; on Jetson use the CUDA steps above if desired):
 
 ```bash
 cd ~
@@ -28,9 +88,9 @@ cd whisper.cpp
 make
 ```
 
-Download a Whisper model (e.g. small English) and note the path, e.g. `~/models/whisper/ggml-small.en-q5_1.bin`.
+Download a Whisper model (e.g. small multilingual `ggml-small-q5_1.bin`) and note the path, e.g. `~/models/whisper/ggml-small-q5_1.bin`. Set `stt.language` in config for your language.
 
-## 3. Piper TTS
+## 4. Piper TTS
 
 Option A: build from source (recommended on Jetson):
 
@@ -51,7 +111,7 @@ Option B: use the install script (downloads Linux pre-built binary):
 
 Put Piper voice models in e.g. `~/models/piper/` (see `docs/INSTALL_MODELS.md`).
 
-## 4. Build memo-RF
+## 5. Build memo-RF
 
 ```bash
 cd /path/to/memo-RF
@@ -67,7 +127,7 @@ cmake -DWHISPER_DIR=/path/to/whisper.cpp ..
 make
 ```
 
-## 5. Configuration
+## 6. Configuration
 
 ```bash
 cp config/config.json.example config/config.json
@@ -75,13 +135,14 @@ cp config/config.json.example config/config.json
 
 Edit `config/config.json`:
 
-- **stt.model_path**: e.g. `~/models/whisper/ggml-small.en-q5_1.bin` (paths with `~` are expanded at load)
+- **stt.model_path**: e.g. `~/models/whisper/ggml-small-q5_1.bin` (small multilingual; paths with `~` are expanded at load). Set **stt.language** (e.g. `en`, `es`, `fr`) for your language.
+- **stt.use_gpu**: set to `true` when whisper is built with CUDA (Jetson); set to `false` for CPU-only whisper
 - **tts.voice_path**: e.g. `~/models/piper/en_US-lessac-medium.onnx`
 - **tts.piper_path**: set to the full path to the `piper` binary if it is not in PATH (e.g. `~/dev/piper/piper`)
 - **tts.espeak_data_path**: leave empty for default (`/usr/share/espeak-ng-data` on Linux), or set if you installed espeak-ng elsewhere
 - **llm.endpoint**: e.g. `http://localhost:8080/completion` if you run llama.cpp server locally
 
-## 6. Run
+## 7. Run
 
 Start the LLM server (if using llama.cpp) in one terminal:
 
@@ -121,7 +182,7 @@ Build memo-RF on a **Linux x86_64 host** and produce an aarch64 binary for the J
   sudo apt-get install -y gcc-aarch64-linux-gnu g++-aarch64-linux-gnu
   ```
 - A **sysroot** (or staging prefix) for aarch64 containing:
-  - PortAudio (e.g. `libportaudio2` + dev)
+  - PortAudio (e.g. `libportaudio2` + `portaudio19-dev`)
   - libcurl (e.g. `libcurl4-openssl-dev`)
   - nlohmann/json (e.g. `nlohmann-json3-dev`) or place `json.hpp` in memo-RF `third_party/nlohmann/`
 - **whisper.cpp** cross-built for aarch64 (see below)
@@ -133,7 +194,7 @@ Build memo-RF on a **Linux x86_64 host** and produce an aarch64 binary for the J
 ```bash
 # On the Jetson:
 sudo apt-get update
-sudo apt-get install -y build-essential libportaudio2 libportaudio2-dev \
+sudo apt-get install -y build-essential libportaudio2 portaudio19-dev \
   libcurl4-openssl-dev pkg-config nlohmann-json3-dev
 # Then on the host, rsync or tar the Jetson's / (or /usr) to e.g. ./sysroot-jetson
 rsync -av --rsync-path="sudo rsync" user@jetson:/usr ./sysroot-jetson/

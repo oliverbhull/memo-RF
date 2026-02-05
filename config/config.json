@@ -1,8 +1,9 @@
 {
   "audio": {
-    "input_device": "0",
-    "output_device": "1",
-    "sample_rate": 16000
+    "input_device": "24",
+    "output_device": "default",
+    "sample_rate": 16000,
+    "input_sample_rate": 48000
   },
   "vad": {
     "threshold": 0.09,
@@ -12,13 +13,14 @@
     "pause_tolerance_ms": 250
   },
   "stt": {
-    "model_path": "/Users/oliverhull/models/whisper/ggml-small.en-q5_1.bin",
-    "language": "en"
+    "model_path": "~/models/whisper/ggml-small-q5_1.bin",
+    "language": "en",
+    "use_gpu": false
   },
   "llm": {
     "endpoint": "http://localhost:11434/api/chat",
     "timeout_ms": 30000,
-    "model_name": "mistral:instruct",
+    "model_name": "qwen2.5:1.5b",
     "translation_model": "translategemma",
     "temperature": 0.7,
     "agent_persona": "retail",
@@ -29,6 +31,8 @@
   "tts": {
     "voice_path": "~/models/piper/en_US-lessac-medium.onnx",
     "voice_models_dir": "",
+    "piper_path": "~/dev/piper/build/piper",
+    "espeak_data_path": "/usr/lib/aarch64-linux-gnu/espeak-ng-data",
     "vox_preroll_ms": 350,
     "vox_preroll_amplitude": 0.55,
     "output_gain": 1.0

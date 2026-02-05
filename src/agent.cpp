@@ -74,9 +74,10 @@ public:
         Logger::info("  Input device: " + config_.audio.input_device);
         Logger::info("  Output device: " + config_.audio.output_device);
         
-        if (!audio_io_->start(config_.audio.input_device, 
+        if (!audio_io_->start(config_.audio.input_device,
                               config_.audio.output_device,
-                              config_.audio.sample_rate)) {
+                              config_.audio.sample_rate,
+                              config_.audio.input_sample_rate)) {
             Logger::error("Failed to start audio I/O");
             return false;
         }
@@ -386,6 +387,7 @@ private:
         if (behavior == "none") {
             LOG_ROUTER("Transcript blank/low-signal - re-listening");
             vad_->reset();
+            state_machine_->reset();  // Return to IdleListening so we accept new speech
             return;
         }
         if (behavior == "say_again") {
@@ -405,6 +407,7 @@ private:
         }
         LOG_ROUTER("Transcript blank/low-signal - re-listening (unknown behavior: " + behavior + ")");
         vad_->reset();
+        state_machine_->reset();  // Return to IdleListening so we accept new speech
     }
     
     void handle_speech_end(AudioBuffer& current_utterance, Transcript& current_transcript,

@@ -75,8 +75,7 @@ if [ -f "$MODEL_FILE" ]; then
     echo "  Location: $MODELS_DIR/$MODEL_FILE"
     echo ""
     echo "To start llama.cpp server with this model:"
-    echo "  cd /Users/oliverhull/dev/whisper.cpp/build/bin"
-    echo "  ./whisper-server -m $MODELS_DIR/$MODEL_FILE -c 2048 --port 8080"
+    echo "  ./scripts/start_server.sh qwen 8080"
 else
     echo "✗ Download failed. Please download manually."
     exit 1

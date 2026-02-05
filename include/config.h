@@ -10,6 +10,8 @@ struct AudioConfig {
     std::string input_device;
     std::string output_device;
     int sample_rate = 16000;
+    /// If set (e.g. 48000), open input device at this rate and resample to sample_rate for pipeline. Use when device does not support 16 kHz.
+    int input_sample_rate = 0;
 };
 
 struct VADConfig {

@@ -1,5 +1,6 @@
 #include "audio_io.h"
 #include "logger.h"
+#include "common.h"
 #include <portaudio.h>
 #include <vector>
 #include <mutex>
@@ -14,17 +15,39 @@
 
 namespace memo_rf {
 
+namespace {
+    AudioFrame resample_input(const AudioFrame& input, int from_rate, int to_rate) {
+        if (from_rate == to_rate) return input;
+        float ratio = static_cast<float>(from_rate) / static_cast<float>(to_rate);
+        size_t output_samples = static_cast<size_t>(input.size() / ratio);
+        AudioFrame output;
+        output.reserve(output_samples);
+        for (size_t i = 0; i < output_samples; i++) {
+            float input_pos = static_cast<float>(i) * ratio;
+            size_t idx0 = static_cast<size_t>(input_pos);
+            size_t idx1 = std::min(idx0 + 1, input.size() - 1);
+            if (idx0 >= input.size()) break;
+            float t = input_pos - idx0;
+            float s0 = static_cast<float>(input[idx0]);
+            float s1 = static_cast<float>(input[idx1]);
+            output.push_back(static_cast<Sample>(s0 * (1.0f - t) + s1 * t));
+        }
+        return output;
+    }
+}
+
 class AudioIO::Impl {
 public:
     Impl() : input_stream_(nullptr), output_stream_(nullptr), full_duplex_stream_(nullptr),
-             sample_rate_(16000), use_full_duplex_(false), playback_complete_(true), stop_playback_(false) {}
+             sample_rate_(16000), input_sample_rate_(16000), use_full_duplex_(false), playback_complete_(true), stop_playback_(false) {}
     
     ~Impl() {
         stop();
     }
     
-    bool start(const std::string& input_device, const std::string& output_device, int sample_rate) {
+    bool start(const std::string& input_device, const std::string& output_device, int sample_rate, int input_sample_rate = 0) {
         sample_rate_ = sample_rate;
+        input_sample_rate_ = (input_sample_rate != 0) ? input_sample_rate : sample_rate;
         playback_complete_ = true;
         stop_playback_ = false;
         
@@ -203,31 +226,35 @@ public:
             input_params.sampleFormat = paInt16;
             input_params.suggestedLatency = input_info->defaultLowInputLatency;
             input_params.hostApiSpecificStreamInfo = nullptr;
-            
-            err = Pa_OpenStream(&input_stream_, &input_params, nullptr, sample_rate_,
-                               SAMPLES_PER_FRAME, paClipOff, nullptr, nullptr);
+            // Use input_sample_rate_ so devices that don't support 16 kHz (e.g. many USB mics) can use 48 kHz and we resample to pipeline rate
+            const unsigned long input_frames = (input_sample_rate_ * 20) / 1000;  // 20 ms at input rate
+            err = Pa_OpenStream(&input_stream_, &input_params, nullptr, input_sample_rate_,
+                               input_frames, paClipOff, nullptr, nullptr);
             if (err != paNoError) {
                 Logger::error("Failed to open input stream: " + std::string(Pa_GetErrorText(err)));
                 Pa_Terminate();
                 return false;
             }
         } else {
-            // Device reports 0 input channels - this is the case for Baofeng adapters
-            // The 3.5mm adapter typically only exposes output to macOS
+            // Device reports 0 input channels - HDMI/selected device has no input, or Baofeng adapter is output-only
             Logger::error("Cannot open separate input stream: device reports 0 input channels");
             Logger::error("");
+#ifdef __APPLE__
             Logger::error("The 3.5mm adapter for Baofeng UV-5R only exposes OUTPUT to macOS.");
             Logger::error("It does not provide audio INPUT capability at the OS level.");
             Logger::error("");
-            Logger::error("Hardware solutions:");
-            Logger::error("  1. Use a USB audio interface that supports bidirectional audio");
-            Logger::error("  2. Use a different adapter/cable that properly exposes both input/output");
-            Logger::error("  3. Programming cables (USB-to-serial) don't provide audio I/O");
-            Logger::error("");
-            Logger::error("Software workaround:");
-            Logger::error("  Use Mac mic for input, Baofeng adapter for output:");
+            Logger::error("Software workaround: Use Mac mic for input, Baofeng adapter for output:");
             Logger::error("  Set input_device='1' (MacBook Pro Microphone)");
             Logger::error("  Keep output_device='0' (External Headphones/Baofeng adapter)");
+#else
+            Logger::error("The selected input device has no input channels (e.g. HDMI is output-only).");
+            Logger::error("On Jetson/Linux, use a USB microphone or a device that has recording capability.");
+            Logger::error("  Run with --list-devices to see available devices and their input channels.");
+            Logger::error("  Set input_device to the device index that has input channels, or try \"default\".");
+#endif
+            Logger::error("");
+            Logger::error("Hardware: Use a USB audio interface with input, or a USB mic for input.");
+            Logger::error("  Programming cables (USB-to-serial) don't provide audio I/O.");
             Logger::error("");
             Logger::error("Current config: input_device='" + input_device + "', output_device='" + output_device + "'");
             Pa_Terminate();
@@ -258,11 +285,14 @@ public:
             err_oss << " (Error code: " << err << ")";
             Logger::error(err_oss.str());
             
-            // Provide helpful macOS-specific guidance
             if (err == paUnanticipatedHostError) {
+#ifdef __APPLE__
                 Logger::error("This may be a macOS permissions issue.");
                 Logger::error("Please check System Settings > Privacy & Security > Microphone");
                 Logger::error("and ensure Terminal/Cursor has microphone access.");
+#else
+                Logger::error("Check that the input device is not in use and has recording permission.");
+#endif
             }
             
             Pa_CloseStream(input_stream_);
@@ -297,16 +327,28 @@ public:
         } else {
             // In separate stream mode, read directly from stream
             if (!input_stream_) return false;
-            
-            frame.resize(SAMPLES_PER_FRAME);
-            PaError err = Pa_ReadStream(input_stream_, frame.data(), SAMPLES_PER_FRAME);
-            
-            if (err == paInputOverflow) {
-                Logger::warn("Input overflow");
-            } else if (err != paNoError) {
-                return false;
+            const unsigned long input_frames = (input_sample_rate_ * 20) / 1000;
+            if (input_sample_rate_ != DEFAULT_SAMPLE_RATE) {
+                AudioFrame raw(input_frames);
+                PaError err = Pa_ReadStream(input_stream_, raw.data(), input_frames);
+                if (err == paInputOverflow) {
+                    Logger::warn("Input overflow");
+                } else if (err != paNoError) {
+                    return false;
+                }
+                frame = resample_input(raw, input_sample_rate_, DEFAULT_SAMPLE_RATE);
+                if (frame.size() != static_cast<size_t>(SAMPLES_PER_FRAME)) {
+                    frame.resize(SAMPLES_PER_FRAME, 0);
+                }
+            } else {
+                frame.resize(SAMPLES_PER_FRAME);
+                PaError err = Pa_ReadStream(input_stream_, frame.data(), SAMPLES_PER_FRAME);
+                if (err == paInputOverflow) {
+                    Logger::warn("Input overflow");
+                } else if (err != paNoError) {
+                    return false;
+                }
             }
-            
             return true;
         }
     }
@@ -632,6 +674,7 @@ private:
     PaStream* output_stream_;
     PaStream* full_duplex_stream_;
     int sample_rate_;
+    int input_sample_rate_;
     bool use_full_duplex_;
     
     mutable std::mutex playback_mutex_;
@@ -646,8 +689,8 @@ private:
 AudioIO::AudioIO() : pimpl_(std::make_unique<Impl>()) {}
 AudioIO::~AudioIO() = default;
 
-bool AudioIO::start(const std::string& input_device, const std::string& output_device, int sample_rate) {
-    return pimpl_->start(input_device, output_device, sample_rate);
+bool AudioIO::start(const std::string& input_device, const std::string& output_device, int sample_rate, int input_sample_rate) {
+    return pimpl_->start(input_device, output_device, sample_rate, input_sample_rate);
 }
 
 bool AudioIO::read_frame(AudioFrame& frame) {

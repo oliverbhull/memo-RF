@@ -16,7 +16,7 @@
 
 3. **Download Whisper model**:
    ```bash
-   # Download ggml-small.en-q5_1.bin to ../whisper.cpp/models/
+   # Download ggml-small-q5_1.bin (small multilingual) to ../whisper.cpp/models/; set stt.language in config
    ```
 
 4. **Install Piper TTS**:

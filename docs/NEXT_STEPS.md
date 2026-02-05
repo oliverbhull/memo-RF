@@ -22,7 +22,7 @@ Edit `config/config.json`:
 ```json
 {
   "stt": {
-    "model_path": "~/models/whisper/ggml-small.en-q5_1.bin"
+    "model_path": "~/models/whisper/ggml-small-q5_1.bin"
   },
   "tts": {
     "voice_path": "path/to/piper/voice.onnx"

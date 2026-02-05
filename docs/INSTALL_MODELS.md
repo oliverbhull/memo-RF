@@ -2,7 +2,7 @@
 
 ## 0. Whisper (STT) and low latency on macOS
 
-- **Metal GPU:** For lower STT latency on macOS, build whisper.cpp with Metal support: `cd whisper.cpp && make GGML_METAL=1`. Memo-RF uses GPU by default when available; set `stt.use_gpu` to `false` in config if your whisper.cpp was built without Metal. A smaller Whisper model (e.g. tiny.en) reduces STT latency at the cost of accuracy.
+- **Metal GPU:** For lower STT latency on macOS, build whisper.cpp with Metal support: `cd whisper.cpp && make GGML_METAL=1`. Memo-RF uses GPU by default when available; set `stt.use_gpu` to `false` in config if your whisper.cpp was built without Metal. A smaller Whisper model (e.g. tiny or tiny.en) reduces STT latency at the cost of accuracy. Use the small multilingual model (`ggml-small-q5_1.bin`) and set `stt.language` in config for your language.
 - **Translator persona:** For the translator persona, use a dedicated translation model for lower latency. With Ollama: set `llm.translation_model` to `translategemma` in config and run `ollama pull translategemma`. Set `llm.keep_alive_sec` (e.g. 300) and `llm.warmup_translation_model` to `true` so the model stays loaded and the first request avoids load_duration. See README Personas and "Low latency (translator)" section.
 - **TTS:** A smaller Piper voice (e.g. low quality) can reduce TTS time vs medium. Reduce `tts.vox_preroll_ms` (e.g. 200) for slightly faster first audio.
 
@@ -50,7 +50,7 @@ Use the project script (uses `$HOME` and env vars; see `scripts/start_server.sh`
 Or run the server binary directly:
 
 ```bash
-# After building llama.cpp (e.g. cd $HOME/dev/llama.cpp && cmake -B build -DLLAMA_SERVER=ON && cmake --build build)
+# After building llama.cpp (e.g. cd $HOME/dev/llama.cpp && cmake -B build -DLLAMA_BUILD_SERVER=ON && cmake --build build)
 ./llama-server -m ~/models/llm/qwen2-1_5b-instruct-q5_k_m.gguf -c 2048 --port 8080 --gpu-layers 35 --host 0.0.0.0
 # On Jetson: use a lower --gpu-layers or 0 for CPU-only if OOM
 ```
@@ -136,7 +136,7 @@ After installation, update your config. Paths support `~` expansion at load time
 ```json
 {
   "stt": {
-    "model_path": "~/models/whisper/ggml-small.en-q5_1.bin"
+    "model_path": "~/models/whisper/ggml-small-q5_1.bin"
   },
   "llm": {
     "endpoint": "http://localhost:8080/completion",

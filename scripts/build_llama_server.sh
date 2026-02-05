@@ -24,7 +24,7 @@ cd "$LLAMA_DIR"
 
 # Configure build with server enabled
 echo "Configuring build..."
-cmake -B build -DLLAMA_SERVER=ON -DCMAKE_BUILD_TYPE=Release
+cmake -B build -DLLAMA_BUILD_SERVER=ON -DCMAKE_BUILD_TYPE=Release
 
 # Build
 echo "Building (this may take a while)..."

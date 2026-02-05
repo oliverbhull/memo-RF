@@ -32,12 +32,14 @@ public:
      * @brief Initialize audio devices and start streams
      * @param input_device Device name or "default" for system default
      * @param output_device Device name or "default" for system default
-     * @param sample_rate Sample rate in Hz (typically 16000)
+     * @param sample_rate Output/pipeline sample rate in Hz (typically 16000)
+     * @param input_sample_rate If non-zero, open input at this rate and resample to sample_rate (for devices that do not support 16 kHz)
      * @return True if initialization successful, false on error
      */
-    bool start(const std::string& input_device, 
+    bool start(const std::string& input_device,
                const std::string& output_device,
-               int sample_rate);
+               int sample_rate,
+               int input_sample_rate = 0);
     
     /**
      * @brief Read a frame of audio from input stream (blocking)

@@ -15,6 +15,21 @@ case "$MODEL_CHOICE" in
     gpt-oss|gptoss)
         MODEL_PATH="$HOME/models/llm/gpt-oss-20b-Q4_K_M.gguf"
         ;;
+    mistral)
+        # Common Mistral GGUF names in ~/models/llm/
+        MODEL_PATH=""
+        for f in \
+            "$HOME/models/llm/mistral-7b-instruct-v0.2-q4_k_m.gguf" \
+            "$HOME/models/llm/mistral-7b-instruct-v0.2.Q4_K_M.gguf" \
+            "$HOME/models/llm/Mistral-7B-Instruct-v0.2-GGUF.q4_k_m.gguf" \
+            "$HOME/models/llm/mistral-7b-instruct-v0.1.Q4_K_M.gguf"; do
+            if [ -f "$f" ]; then
+                MODEL_PATH="$f"
+                break
+            fi
+        done
+        [ -n "$MODEL_PATH" ] || MODEL_PATH="$HOME/models/llm/mistral-7b-instruct-v0.2-q4_k_m.gguf"
+        ;;
     *)
         # Treat as direct path
         MODEL_PATH="$MODEL_CHOICE"
@@ -29,18 +44,27 @@ fi
 if [ ! -f "$MODEL_PATH" ]; then
     echo "Error: Model not found at: $MODEL_PATH"
     echo ""
+    echo "Install a Qwen model first: ./scripts/install_qwen.sh"
+    echo "Or set MEMO_RF_LLM_MODEL to a .gguf model path."
+    echo ""
     echo "Usage: $0 [model_choice|model_path] [port]"
     echo ""
     echo "Model choices:"
     echo "  qwen     - QWEN2 1.5B (default)"
+    echo "  mistral  - Mistral 7B (if GGUF in ~/models/llm/)"
     echo "  gpt-oss  - GPT-OSS 20B"
+    echo ""
+    echo "Or use Ollama with Mistral (no download):"
+    echo "  ollama serve && ollama pull mistral"
+    echo "  Then set config: llm.endpoint = http://localhost:11434/api/chat, llm.model_name = mistral"
     echo ""
     echo "Or provide full path:"
     echo "  $0 ~/models/llm/your-model.gguf 8080"
     echo ""
     echo "Examples:"
     echo "  $0 qwen 8080"
-    echo "  $0 gpt-oss 8080"
+    echo "  $0 mistral 8080"
+    echo "  $0 ~/models/llm/mistral-7b-instruct-v0.2-q4_k_m.gguf 8080"
     exit 1
 fi
 
@@ -71,7 +95,7 @@ if [ -z "$SERVER_BIN" ]; then
     echo ""
     echo "Set MEMO_RF_LLAMA_DIR or LLAMA_CPP_DIR to your llama.cpp clone, or build:"
     echo "  cd \$HOME/dev/llama.cpp"
-    echo "  cmake -B build -DLLAMA_SERVER=ON"
+    echo "  cmake -B build -DLLAMA_BUILD_SERVER=ON"
     echo "  cmake --build build --config Release"
     echo ""
     exit 1
@@ -110,6 +134,11 @@ else
     # Smaller models (QWEN, etc.)
     GPU_LAYERS=35
     CONTEXT_SIZE=2048
+    # On Jetson (aarch64 + NVIDIA GPU), use conservative GPU layers to avoid OOM on 8GB
+    if [ "$(uname -m)" = "aarch64" ] && (command -v nvidia-smi >/dev/null 2>&1 || [ -d /usr/local/cuda ]); then
+        GPU_LAYERS=22
+        echo "  Jetson detected - using conservative GPU layers for 8GB: $GPU_LAYERS"
+    fi
 fi
 
 if [ "$GPU_LAYERS" -eq 0 ]; then

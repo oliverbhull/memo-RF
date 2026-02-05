@@ -9,6 +9,7 @@
  */
 
 #include <cstdint>
+#include <stdexcept>
 #include <vector>
 #include <string>
 #include <chrono>

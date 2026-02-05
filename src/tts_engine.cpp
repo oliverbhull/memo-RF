@@ -1,6 +1,7 @@
 #include "tts_engine.h"
 #include "logger.h"
 #include "path_utils.h"
+#include <cstdio>
 #include <fstream>
 #include <cmath>
 #include <cstring>
@@ -224,18 +225,26 @@ private:
         int flags = fcntl(pipe_from_piper_[0], F_GETFL, 0);
         fcntl(pipe_from_piper_[0], F_SETFL, flags | O_NONBLOCK);
 
-        // Give piper a moment to initialize
-        usleep(500000);  // 500ms
+        // Give piper time to load model (Jetson/slow devices may need 2s+)
+        usleep(2000000);  // 2s
 
         // Check if process is still running
-        int status;
+        int status = 0;
         pid_t result = waitpid(piper_pid_, &status, WNOHANG);
         if (result == 0) {
             // Process is still running
             piper_initialized_ = true;
             LOG_TTS("Persistent piper process started (PID: " + std::to_string(piper_pid_) + ")");
         } else {
-            LOG_TTS("Piper process failed to start");
+            std::ostringstream oss;
+            oss << "Piper process failed to start: ";
+            if (WIFEXITED(status))
+                oss << "exit " << WEXITSTATUS(status);
+            else if (WIFSIGNALED(status))
+                oss << "signal " << WTERMSIG(status);
+            else
+                oss << "status " << status;
+            LOG_TTS(oss.str());
             piper_pid_ = -1;
         }
     }
@@ -360,24 +369,93 @@ private:
     }
 
     AudioBuffer synth_via_system_call(const std::string& text) {
-        // Fallback: spawn piper process (slower)
-        LOG_TTS("Using fallback system() call for TTS");
+        // Fallback: fork/exec piper (no shell) to avoid shell escaping and child abort issues
+        LOG_TTS("Using fallback fork/exec for TTS");
 
         std::string temp_wav = "/tmp/memo_rf_tts_temp_" +
             std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()) + ".wav";
 
-        std::string escaped_text = escape_shell(text);
-
+        std::string json_input = "{\"text\": \"" + escape_json(text) + "\"}\n";
         std::string espeak = config_.espeak_data_path.empty() ? default_espeak_data_path() : config_.espeak_data_path;
-        std::string cmd = "echo \"" + escaped_text + "\" | " + piper_path_ +
-                        " --model " + config_.voice_path +
-                        " --espeak_data " + espeak +
-                        " --output_file " + temp_wav + " 2>/dev/null";
 
-        int ret = system(cmd.c_str());
+        int pipe_fd[2];
+        int stderr_pipe[2];
+        if (pipe(pipe_fd) == -1 || pipe(stderr_pipe) == -1) {
+            LOG_TTS("Failed to create pipe for piper fallback");
+            if (pipe_fd[0] >= 0) { close(pipe_fd[0]); close(pipe_fd[1]); }
+            if (stderr_pipe[0] >= 0) { close(stderr_pipe[0]); close(stderr_pipe[1]); }
+            return AudioBuffer();
+        }
 
-        if (ret != 0) {
-            LOG_TTS("Piper system call failed");
+        pid_t pid = fork();
+        if (pid == -1) {
+            close(pipe_fd[0]);
+            close(pipe_fd[1]);
+            close(stderr_pipe[0]);
+            close(stderr_pipe[1]);
+            LOG_TTS("Failed to fork for piper fallback");
+            return AudioBuffer();
+        }
+
+        if (pid == 0) {
+            // Child: redirect stdin from pipe, stderr to pipe so parent can log it
+            dup2(pipe_fd[0], STDIN_FILENO);
+            close(pipe_fd[0]);
+            close(pipe_fd[1]);
+            close(stderr_pipe[0]);
+            dup2(stderr_pipe[1], STDERR_FILENO);
+            close(stderr_pipe[1]);
+            execl(piper_path_.c_str(), "piper",
+                  "--model", config_.voice_path.c_str(),
+                  "--espeak_data", espeak.c_str(),
+                  "--json-input",
+                  "--output_file", temp_wav.c_str(),
+                  "--quiet",
+                  nullptr);
+            _exit(127);
+        }
+
+        // Parent: close child's stderr write end so we get EOF when child exits
+        close(stderr_pipe[1]);
+        close(pipe_fd[0]);
+        ssize_t written = write(pipe_fd[1], json_input.c_str(), json_input.size());
+        close(pipe_fd[1]);
+        if (written != static_cast<ssize_t>(json_input.size())) {
+            waitpid(pid, nullptr, 0);
+            close(stderr_pipe[0]);
+            LOG_TTS("Failed to write JSON to piper fallback");
+            return AudioBuffer();
+        }
+
+        int status = 0;
+        pid_t w = waitpid(pid, &status, 0);
+        // Read any stderr from Piper for diagnostics
+        std::string piper_stderr;
+        char buf[256];
+        for (;;) {
+            ssize_t n = read(stderr_pipe[0], buf, sizeof(buf) - 1);
+            if (n <= 0) break;
+            buf[n] = '\0';
+            piper_stderr += buf;
+        }
+        close(stderr_pipe[0]);
+        while (!piper_stderr.empty() && (piper_stderr.back() == '\n' || piper_stderr.back() == '\r')) {
+            piper_stderr.pop_back();
+        }
+
+        if (w != pid || !WIFEXITED(status) || WEXITSTATUS(status) != 0) {
+            std::ostringstream oss;
+            oss << "Piper fallback failed: ";
+            if (WIFEXITED(status))
+                oss << "exit " << WEXITSTATUS(status);
+            else if (WIFSIGNALED(status))
+                oss << "signal " << WTERMSIG(status);
+            else
+                oss << "status " << status;
+            if (!piper_stderr.empty())
+                oss << " stderr=\"" << piper_stderr << "\"";
+            LOG_TTS(oss.str());
+            remove(temp_wav.c_str());
             return AudioBuffer();
         }
 

@@ -15,9 +15,10 @@
     "debug_log_rms_each_frame": false
   },
   "stt": {
-    "model_path": "~/models/whisper/ggml-small.en-q5_1.bin",
+    "model_path": "~/models/whisper/ggml-small-q5_1.bin",
     "language": "en",
-    "blank_sentinel": "[BLANK_AUDIO]"
+    "blank_sentinel": "[BLANK_AUDIO]",
+    "use_gpu": true
   },
   "transcript_gate": {
     "min_transcript_chars": 1,

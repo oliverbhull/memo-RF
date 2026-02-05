@@ -21,7 +21,7 @@ Single C++ binary with modular components:
 
 - **CMake** 3.15+
 - **C++17** compiler
-- **PortAudio** (libportaudio2-dev on Ubuntu, portaudio via Homebrew on Mac)
+- **PortAudio** (libportaudio2 + portaudio19-dev on Ubuntu/Jetson, portaudio via Homebrew on Mac)
 - **whisper.cpp** (source code repository, must be built)
   - Clone: `git clone https://github.com/ggerganov/whisper.cpp.git`
   - Build: `cd whisper.cpp && make` (on macOS, use `make GGML_METAL=1` for Metal GPU acceleration and lower STT latency)
@@ -49,7 +49,7 @@ curl -L -o third_party/nlohmann/json.hpp \
 
 ### Models
 
-1. **Whisper model**: Download `ggml-small.en-q5_1.bin` from whisper.cpp
+1. **Whisper model**: Download `ggml-small-q5_1.bin` (small multilingual) from whisper.cpp; set `stt.language` in config for your language
 2. **Piper voice**: Download an English voice model (e.g., `en_US-lessac-medium.onnx`)
 
 ## Building
@@ -77,9 +77,9 @@ make
 
 On Ubuntu or Jetson (aarch64):
 
-1. Install system deps: `sudo apt-get install -y build-essential libportaudio2 libcurl4-openssl-dev pkg-config`
+1. Install system deps: `sudo apt-get install -y build-essential libportaudio2 portaudio19-dev libcurl4-openssl-dev pkg-config`
 2. Install nlohmann/json: `sudo apt-get install -y nlohmann-json3-dev` or place `json.hpp` in `third_party/nlohmann/`
-3. Build whisper.cpp for your platform (optionally with CUDA on Jetson): `cd whisper.cpp && make`
+3. Build whisper.cpp (and optionally llama.cpp) for your platform; for CUDA on Jetson Orin Nano see **docs/JETSON_SETUP.md** (CUDA section).
 4. Build memo-RF: `./build.sh` or `mkdir build && cd build && cmake -DWHISPER_DIR=/path/to/whisper.cpp .. && make`
 5. Install Piper (see `docs/INSTALL_MODELS.md`); set `tts.voice_path` and optionally `tts.piper_path` / `tts.espeak_data_path` in config
 6. Copy `config/config.json.example` to `config/config.json` and set `stt.model_path`, `tts.voice_path`, `llm.endpoint`
@@ -94,7 +94,7 @@ See `docs/JETSON_SETUP.md` for a concise Jetson setup and transfer steps.
    ```
 
 2. Edit `config/config.json` and update:
-   - `stt.model_path`: Path to your Whisper model (e.g. `~/models/whisper/ggml-small.en-q5_1.bin`; `~` is expanded at load)
+   - `stt.model_path`: Path to your Whisper model (e.g. `~/models/whisper/ggml-small-q5_1.bin`; `~` is expanded at load). Use the multilingual small model and set `stt.language` for your language.
    - `tts.voice_path`: Path to your Piper voice model (e.g. `~/models/piper/en_US-lessac-medium.onnx`)
    - `tts.piper_path`: Optional; Piper binary path (empty = auto-detect). Set on Linux/Jetson if piper is not in PATH.
    - `tts.espeak_data_path`: Optional; espeak-ng data dir (empty = platform default: `/usr/share/espeak-ng-data` on Linux, `/opt/homebrew/share/espeak-ng-data` on macOS)
