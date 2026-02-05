@@ -62,6 +62,9 @@
     "espeak_data_path": "",
     "vox_preroll_ms": 350,
     "vox_preroll_amplitude": 0.55,
+    "vox_end_tone_ms": 250,
+    "vox_end_tone_amplitude": 0.55,
+    "vox_end_tone_freq_hz": 440.0,
     "output_gain": 1.0,
     "preload_phrases": [
       "roger.",

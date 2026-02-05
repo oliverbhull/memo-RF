@@ -2,6 +2,9 @@
 # Build whisper.cpp with CUDA on Jetson Orin Nano (native build).
 # Run from memo-RF repo root, or pass the path to whisper.cpp as the first argument.
 # After build, set WHISPER_DIR to the whisper.cpp SOURCE directory when building memo-RF.
+#
+# The first CUDA build can take 20–40 minutes and is memory-heavy. Run this script
+# in an external terminal (not inside Cursor) to avoid IDE timeouts.
 
 set -e
 
@@ -20,11 +23,16 @@ fi
 
 echo "Building whisper.cpp with CUDA for Jetson Orin Nano..."
 echo "  Source: $WHISPER_DIR"
+echo "  (First build may take 20–40 min; run in an external terminal to avoid timeouts.)"
 echo ""
 
 cd "$WHISPER_DIR"
-cmake -B build -DGGML_CUDA=1 -DCMAKE_CUDA_ARCHITECTURES=87
-cmake --build build
+cmake -B build \
+    -DGGML_CUDA=1 \
+    -DCMAKE_CUDA_ARCHITECTURES=87 \
+    -DWHISPER_BUILD_EXAMPLES=OFF \
+    -DWHISPER_BUILD_TESTS=OFF
+cmake --build build -j1 --target whisper
 
 echo ""
 echo "Build complete. Set WHISPER_DIR when building memo-RF:"

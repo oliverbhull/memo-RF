@@ -25,26 +25,30 @@ To use the GPU for STT (whisper.cpp) and LLM (llama.cpp server) on a Jetson Orin
 
 ### whisper.cpp with CUDA
 
-Build **natively on the Jetson** (not cross-compile). Use CMake:
+Build **natively on the Jetson** (not cross-compile). The **first** CUDA build is long (20–40 minutes) and memory-heavy; run it in a **normal terminal** (e.g. SSH or an external terminal), not inside Cursor, to avoid IDE timeouts.
+
+**Recommended:** use the project script, which builds with a single job (`-j1`) to avoid OOM and skips examples/tests:
+
+```bash
+cd /path/to/memo-RF
+./scripts/build_whisper_jetson_cuda.sh [path/to/whisper.cpp]
+# Default: $HOME/dev/whisper.cpp
+```
+
+**Manual build:** if you configure and build whisper.cpp yourself, use `-j1` to avoid memory exhaustion and "nvcc: Terminated" on Jetson:
 
 ```bash
 cd /path/to/whisper.cpp
-cmake -B build -DGGML_CUDA=1
+cmake -B build -DGGML_CUDA=1 -DCMAKE_CUDA_ARCHITECTURES=87 \
+  -DWHISPER_BUILD_EXAMPLES=OFF -DWHISPER_BUILD_TESTS=OFF
+cmake --build build -j1 --target whisper
 ```
 
-If nvcc errors about GPU architecture, add `-DCMAKE_CUDA_ARCHITECTURES=87` (Orin Nano is compute capability 8.7):
-
-```bash
-cmake -B build -DGGML_CUDA=1 -DCMAKE_CUDA_ARCHITECTURES=87
-```
-
-Then:
-
-```bash
-cmake --build build
-```
+(If nvcc errors about GPU architecture, `-DCMAKE_CUDA_ARCHITECTURES=87` is required for Orin Nano, compute capability 8.7.)
 
 The library is produced under `build/` (e.g. `build/src/libwhisper.a` or a shared lib). Set `WHISPER_DIR` to the **source** directory of whisper.cpp (e.g. `/path/to/whisper.cpp`); memo-RF's CMake looks under `WHISPER_DIR/build/src`, `build`, etc.
+
+**Power/thermal:** If you see "System throttled due to over-current" in logs, the board is limiting power; ensure adequate power supply and cooling. STT may still work but can be slower.
 
 ### llama.cpp with CUDA
 

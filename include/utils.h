@@ -78,6 +78,23 @@ inline bool is_blank_transcript(const std::string& text, const std::string& blan
 }
 
 /**
+ * @brief Remove trailing " over." or " over" (case-insensitive) for TTS when using end tone instead.
+ * @param str Text that may end with "over" / "over."
+ * @return Copy of str with trailing over/over. removed (trimmed)
+ */
+inline std::string strip_trailing_over(const std::string& str) {
+    std::string t = trim_copy(str);
+    if (t.empty()) return t;
+    std::string n = normalize_copy(t);
+    size_t len = n.size();
+    if (len >= 5 && n.compare(len - 5, 5, "over.") == 0)
+        return trim_copy(t.substr(0, t.size() - 5));
+    if (len >= 4 && n.compare(len - 4, 4, "over") == 0)
+        return trim_copy(t.substr(0, t.size() - 4));
+    return t;
+}
+
+/**
  * @brief Ensure transmission text ends with " over." (radio protocol)
  * Replaces trailing "over and out" with "over." so we never say both or double "over."
  * @param str Text that will be spoken over the air

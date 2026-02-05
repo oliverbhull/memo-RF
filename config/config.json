@@ -15,7 +15,7 @@
   "stt": {
     "model_path": "~/models/whisper/ggml-small-q5_1.bin",
     "language": "en",
-    "use_gpu": false
+    "use_gpu": true
   },
   "llm": {
     "endpoint": "http://localhost:11434/api/chat",
@@ -23,10 +23,10 @@
     "model_name": "qwen2.5:1.5b",
     "translation_model": "translategemma",
     "temperature": 0.7,
-    "agent_persona": "retail",
+    "agent_persona": "manufacturing`",
     "response_language": "en",
     "stop_sequences": ["</s>", "\n\n", "User:", "Human:"],
-    "use_manufacturing_router": false
+    "use_manufacturing_router": true
   },
   "tts": {
     "voice_path": "~/models/piper/en_US-lessac-medium.onnx",
@@ -35,6 +35,9 @@
     "espeak_data_path": "/usr/lib/aarch64-linux-gnu/espeak-ng-data",
     "vox_preroll_ms": 350,
     "vox_preroll_amplitude": 0.55,
+    "vox_end_tone_ms": 250,
+    "vox_end_tone_amplitude": 0.55,
+    "vox_end_tone_freq_hz": 440.0,
     "output_gain": 1.0
   },
   "wake_word": {

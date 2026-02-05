@@ -45,6 +45,9 @@ constexpr int VOX_PREROLL_MS_MAX = 250;
 // VAD guard period after transmission (prevents feedback)
 constexpr int VAD_GUARD_PERIOD_MS = 1500; // Wait 1500ms after playback completes before re-enabling VAD
 
+// Delay after playback_complete before transitioning to IdleListening (lets DAC/mic settle)
+constexpr int POST_PLAYBACK_DELAY_MS = 1000;
+
 // Transcript result
 struct Transcript {
     std::string text;

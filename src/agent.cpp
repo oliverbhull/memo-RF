@@ -216,7 +216,7 @@ public:
             }
             
             // Check if playback completed while in Transmitting state
-            // This must be checked every frame to catch the transition
+            // Wait POST_PLAYBACK_DELAY_MS after playback_complete before transitioning so DAC/mic can settle
             if (current_state == State::Transmitting) {
                 bool playback_done = audio_io_->is_playback_complete();
                 // Log periodically to debug stuck state (every 100 frames = ~6 seconds at 16kHz)
@@ -226,15 +226,21 @@ public:
                     LOG_TX(oss.str());
                 }
                 if (playback_done) {
-                    // Playback finished - transition to IdleListening
-                    LOG_TX("Playback complete, transitioning to IdleListening");
-                    state_machine_->on_playback_complete();
-                    transmission_end_time_ = std::chrono::steady_clock::now();
-                    vad_->reset(); // Clear any accumulated audio
-                    // Flush input queue so we do not process stale audio that accumulated
-                    // while the main loop was blocked in handle_speech_end (STT/LLM/TTS)
-                    audio_io_->flush_input_queue();
-                    current_state = state_machine_->get_state(); // Update current_state after transition
+                    if (!post_playback_delay_started_) {
+                        playback_complete_at_ = std::chrono::steady_clock::now();
+                        post_playback_delay_started_ = true;
+                    }
+                    auto elapsed_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                        std::chrono::steady_clock::now() - playback_complete_at_).count();
+                    if (elapsed_ms >= POST_PLAYBACK_DELAY_MS) {
+                        LOG_TX("Playback complete, transitioning to IdleListening");
+                        state_machine_->on_playback_complete();
+                        transmission_end_time_ = std::chrono::steady_clock::now();
+                        vad_->reset(); // Clear any accumulated audio
+                        audio_io_->flush_input_queue();
+                        current_state = state_machine_->get_state();
+                        post_playback_delay_started_ = false;
+                    }
                 }
             }
             
@@ -387,6 +393,7 @@ private:
         if (behavior == "none") {
             LOG_ROUTER("Transcript blank/low-signal - re-listening");
             vad_->reset();
+            transmission_end_time_ = std::chrono::steady_clock::now();  // Guard period applies after re-listen
             state_machine_->reset();  // Return to IdleListening so we accept new speech
             return;
         }
@@ -407,6 +414,7 @@ private:
         }
         LOG_ROUTER("Transcript blank/low-signal - re-listening (unknown behavior: " + behavior + ")");
         vad_->reset();
+        transmission_end_time_ = std::chrono::steady_clock::now();  // Guard period applies after re-listen
         state_machine_->reset();  // Return to IdleListening so we accept new speech
     }
     
@@ -920,11 +928,16 @@ private:
                 : config_.llm.truncation.fallback_phrase;
         }
         
-        // Synthesize response (ensure transmission ends with " over.")
-        std::string response_text = utils::ensure_ends_with_over(llm_response);
+        // Synthesize response (no spoken "over"; end tone appended so playback_complete fires after tone)
+        std::string response_text = utils::strip_trailing_over(utils::trim_copy(llm_response));
+        if (response_text.empty()) response_text = "Stand by.";
         LOG_TTS("Synthesizing response...");
         auto tts_start = std::chrono::steady_clock::now();
         response_audio = tts_->synth_vox(response_text);
+        AudioBuffer end_tone = tts_->get_end_tone_buffer();
+        if (!end_tone.empty()) {
+            response_audio.insert(response_audio.end(), end_tone.begin(), end_tone.end());
+        }
         auto tts_end = std::chrono::steady_clock::now();
         int64_t tts_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
             tts_end - tts_start).count();
@@ -961,9 +974,14 @@ private:
 
     void execute_fallback(const Plan& plan, AudioBuffer& response_audio, int utterance_id,
                          bool wait_for_channel_clear = false) {
-        std::string text = utils::ensure_ends_with_over(plan.fallback_text);
+        std::string text = utils::strip_trailing_over(utils::trim_copy(plan.fallback_text));
+        if (text.empty()) text = "Stand by.";
         LOG_ROUTER(std::string("Fallback - speaking: \"") + text + "\"");
         response_audio = tts_->synth_vox(text);
+        AudioBuffer end_tone = tts_->get_end_tone_buffer();
+        if (!end_tone.empty()) {
+            response_audio.insert(response_audio.end(), end_tone.begin(), end_tone.end());
+        }
         recorder_->record_tts_output(response_audio, utterance_id);
         if (wait_for_channel_clear) return;
         state_machine_->on_response_ready(response_audio);
@@ -1138,6 +1156,10 @@ private:
     
     // Track transmission end time for guard period
     std::chrono::steady_clock::time_point transmission_end_time_;
+    
+    // Post-playback delay: wait before transitioning to IdleListening so DAC/mic can settle
+    std::chrono::steady_clock::time_point playback_complete_at_;
+    bool post_playback_delay_started_ = false;
     
     // Track previous state for transition detection
     State previous_state_;

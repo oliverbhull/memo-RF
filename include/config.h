@@ -99,6 +99,9 @@ struct TTSConfig {
     std::string espeak_data_path;  ///< espeak-ng data dir (empty = platform default)
     int vox_preroll_ms = 350;       ///< Tone duration before speech so VOX opens (ms)
     float vox_preroll_amplitude = 0.55f;  ///< Tone amplitude 0–1 so VOX reliably triggers
+    int vox_end_tone_ms = 250;      ///< Tone duration at end of transmission (0 = none)
+    float vox_end_tone_amplitude = 0.55f;  ///< End tone amplitude 0–1
+    float vox_end_tone_freq_hz = 440.0f;   ///< End tone frequency (Hz)
     float output_gain = 1.0f;
 };
 

@@ -33,6 +33,9 @@ public:
         , piper_initialized_(false)
     {
         preroll_samples_ = (config_.vox_preroll_ms * DEFAULT_SAMPLE_RATE) / 1000;
+        end_tone_samples_ = (config_.vox_end_tone_ms > 0)
+            ? (config_.vox_end_tone_ms * DEFAULT_SAMPLE_RATE) / 1000
+            : 0;
 
         // Find piper binary path once
         find_piper_path();
@@ -98,6 +101,11 @@ public:
 
     AudioBuffer get_preroll_buffer() {
         return generate_preroll();
+    }
+
+    AudioBuffer get_end_tone_buffer() {
+        if (end_tone_samples_ == 0) return AudioBuffer();
+        return generate_end_tone();
     }
 
     void preload_phrase(const std::string& text) {
@@ -594,10 +602,25 @@ private:
         return preroll;
     }
 
+    AudioBuffer generate_end_tone() {
+        if (end_tone_samples_ == 0) return AudioBuffer();
+        AudioBuffer tone(end_tone_samples_);
+        const float freq = config_.vox_end_tone_freq_hz;
+        const float sample_rate = static_cast<float>(DEFAULT_SAMPLE_RATE);
+        const float amplitude = config_.vox_end_tone_amplitude;
+        for (size_t i = 0; i < end_tone_samples_; i++) {
+            float t = static_cast<float>(i) / sample_rate;
+            float value = amplitude * std::sin(2.0f * static_cast<float>(M_PI) * freq * t);
+            tone[i] = static_cast<Sample>(std::clamp(value * 32767.0f, -32768.0f, 32767.0f));
+        }
+        return tone;
+    }
+
     TTSConfig config_;
     std::string piper_path_;
     std::map<std::string, AudioBuffer> cache_;
     size_t preroll_samples_;
+    size_t end_tone_samples_;
 
     // Persistent piper process
     pid_t piper_pid_;
@@ -622,6 +645,10 @@ AudioBuffer TTSEngine::synth_vox(const std::string& text) {
 
 AudioBuffer TTSEngine::get_preroll_buffer() {
     return pimpl_->get_preroll_buffer();
+}
+
+AudioBuffer TTSEngine::get_end_tone_buffer() {
+    return pimpl_->get_end_tone_buffer();
 }
 
 void TTSEngine::preload_phrase(const std::string& text) {

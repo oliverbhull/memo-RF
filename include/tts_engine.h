@@ -25,6 +25,9 @@ public:
     // Return just the VOX pre-roll tone buffer (same as prepended in synth_vox)
     AudioBuffer get_preroll_buffer();
     
+    // Return end-of-transmission tone buffer (append after speech when vox_end_tone_ms > 0)
+    AudioBuffer get_end_tone_buffer();
+    
     // Pre-load common phrases for caching
     void preload_phrase(const std::string& text);
 

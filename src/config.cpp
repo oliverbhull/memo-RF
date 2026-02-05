@@ -224,6 +224,9 @@ Config Config::load_from_file(const std::string& path) {
         if (t.contains("espeak_data_path")) cfg.tts.espeak_data_path = t["espeak_data_path"];
         if (t.contains("vox_preroll_ms")) cfg.tts.vox_preroll_ms = t["vox_preroll_ms"];
         if (t.contains("vox_preroll_amplitude")) cfg.tts.vox_preroll_amplitude = t["vox_preroll_amplitude"];
+        if (t.contains("vox_end_tone_ms")) cfg.tts.vox_end_tone_ms = t["vox_end_tone_ms"];
+        if (t.contains("vox_end_tone_amplitude")) cfg.tts.vox_end_tone_amplitude = t["vox_end_tone_amplitude"];
+        if (t.contains("vox_end_tone_freq_hz")) cfg.tts.vox_end_tone_freq_hz = t["vox_end_tone_freq_hz"];
         if (t.contains("output_gain")) cfg.tts.output_gain = t["output_gain"];
     }
     
@@ -357,6 +360,9 @@ void Config::save_to_file(const std::string& path) const {
     j["tts"]["espeak_data_path"] = tts.espeak_data_path;
     j["tts"]["vox_preroll_ms"] = tts.vox_preroll_ms;
     j["tts"]["vox_preroll_amplitude"] = tts.vox_preroll_amplitude;
+    j["tts"]["vox_end_tone_ms"] = tts.vox_end_tone_ms;
+    j["tts"]["vox_end_tone_amplitude"] = tts.vox_end_tone_amplitude;
+    j["tts"]["vox_end_tone_freq_hz"] = tts.vox_end_tone_freq_hz;
     j["tts"]["output_gain"] = tts.output_gain;
     
     j["tx"]["max_transmit_ms"] = tx.max_transmit_ms;

@@ -16,6 +16,13 @@
 namespace memo_rf {
 
 namespace {
+    // Number of output frames of silence after queue empties before we mark playback complete.
+    // Ensures the last frame of audio (or tone) has actually left the DAC before we transition
+    // to IdleListening, avoiding VAD/STT picking up the tail and returning [BLANK_AUDIO].
+    constexpr int TRAILING_SILENCE_FRAMES = 2;  // ~40ms at 20ms/frame
+}
+
+namespace {
     AudioFrame resample_input(const AudioFrame& input, int from_rate, int to_rate) {
         if (from_rate == to_rate) return input;
         float ratio = static_cast<float>(from_rate) / static_cast<float>(to_rate);
@@ -39,7 +46,7 @@ namespace {
 class AudioIO::Impl {
 public:
     Impl() : input_stream_(nullptr), output_stream_(nullptr), full_duplex_stream_(nullptr),
-             sample_rate_(16000), input_sample_rate_(16000), use_full_duplex_(false), playback_complete_(true), stop_playback_(false) {}
+             sample_rate_(16000), input_sample_rate_(16000), use_full_duplex_(false), playback_complete_(true), stop_playback_(false), trailing_silence_frames_(0) {}
     
     ~Impl() {
         stop();
@@ -50,6 +57,7 @@ public:
         input_sample_rate_ = (input_sample_rate != 0) ? input_sample_rate : sample_rate;
         playback_complete_ = true;
         stop_playback_ = false;
+        trailing_silence_frames_ = 0;
         
         PaError err = Pa_Initialize();
         if (err != paNoError) {
@@ -368,6 +376,7 @@ public:
         std::lock_guard<std::mutex> lock(playback_mutex_);
         stop_playback_ = false;
         playback_complete_ = false;
+        trailing_silence_frames_ = 0;
         
         // Clear queue and add new buffer
         while (!playback_queue_.empty()) {
@@ -395,6 +404,7 @@ public:
     bool append_playback(const AudioBuffer& buffer) {
         std::lock_guard<std::mutex> lock(playback_mutex_);
         bool was_empty = playback_queue_.empty();
+        trailing_silence_frames_ = 0;  // New data: require trailing silence again before complete
         for (size_t i = 0; i < buffer.size(); i += SAMPLES_PER_FRAME) {
             AudioFrame frame;
             size_t remaining = buffer.size() - i;
@@ -611,8 +621,12 @@ private:
             // Output silence
             std::memset(out, 0, frame_count * sizeof(Sample));
             if (self->playback_queue_.empty() && !self->playback_complete_) {
-                // Mark playback as complete when queue is empty
-                self->playback_complete_ = true;
+                // Require a few frames of silence so the last frame has left the DAC;
+                // avoids VAD picking up the tail and triggering [BLANK_AUDIO].
+                self->trailing_silence_frames_++;
+                if (self->trailing_silence_frames_ >= TRAILING_SILENCE_FRAMES) {
+                    self->playback_complete_ = true;
+                }
             }
             return paContinue;
         }
@@ -655,8 +669,10 @@ private:
             // Output silence
             std::memset(out, 0, frame_count * sizeof(Sample));
             if (self->playback_queue_.empty() && !self->playback_complete_) {
-                // Mark playback as complete when queue is empty
-                self->playback_complete_ = true;
+                self->trailing_silence_frames_++;
+                if (self->trailing_silence_frames_ >= TRAILING_SILENCE_FRAMES) {
+                    self->playback_complete_ = true;
+                }
             }
             return paContinue;
         }
@@ -681,6 +697,7 @@ private:
     std::queue<AudioFrame> playback_queue_;
     std::atomic<bool> playback_complete_;
     std::atomic<bool> stop_playback_;
+    int trailing_silence_frames_;  ///< Frames of silence after queue empty before marking complete
     
     mutable std::mutex input_queue_mutex_;
     std::queue<AudioFrame> input_queue_;
