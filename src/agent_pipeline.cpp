@@ -120,21 +120,46 @@ bool AgentPipeline::check_and_handle_persona_change(const std::string& transcrip
     std::transform(lower.begin(), lower.end(), lower.begin(),
         [](unsigned char c) { return std::tolower(c); });
 
-    // Check for "memo change persona to X" or "memo change persona X"
-    const std::string trigger = "memo change persona";
-    size_t pos = lower.find(trigger);
+    // Fuzzy match for "memo change persona" - handle STT typos
+    // Common STT errors: "person" vs "persona", "changed" vs "change", "too" vs "to"
+    bool has_memo = (lower.find("memo") != std::string::npos);
+    bool has_change = (lower.find("change") != std::string::npos || lower.find("changed") != std::string::npos);
+    bool has_persona = (lower.find("persona") != std::string::npos || lower.find("person") != std::string::npos);
+
+    if (!has_memo || !has_change || !has_persona) {
+        return false;
+    }
+
+    // Find where the persona name starts (after "persona" or "person")
+    size_t pos = lower.find("persona");
+    if (pos == std::string::npos) {
+        pos = lower.find("person");
+    }
     if (pos == std::string::npos) {
         return false;
     }
 
-    // Extract persona name after trigger
-    size_t after_trigger = pos + trigger.length();
+    // Extract persona name after "persona" or "person"
+    size_t after_trigger = pos + 7; // length of "persona"
+    if (lower.substr(pos, 6) == "person" && lower.substr(pos, 7) != "persona") {
+        after_trigger = pos + 6; // length of "person"
+    }
+
     while (after_trigger < lower.length() && std::isspace(lower[after_trigger])) {
         after_trigger++;
     }
 
-    // Skip optional "to"
-    if (lower.substr(after_trigger, 3) == "to ") {
+    // Skip optional "to", "too", or "2" (common STT mistakes)
+    if (after_trigger + 2 <= lower.length()) {
+        std::string maybe_to = lower.substr(after_trigger, 2);
+        if (maybe_to == "to" || maybe_to == "2 ") {
+            after_trigger += 2;
+            while (after_trigger < lower.length() && std::isspace(lower[after_trigger])) {
+                after_trigger++;
+            }
+        }
+    }
+    if (after_trigger + 3 <= lower.length() && lower.substr(after_trigger, 3) == "too") {
         after_trigger += 3;
         while (after_trigger < lower.length() && std::isspace(lower[after_trigger])) {
             after_trigger++;
@@ -152,12 +177,22 @@ bool AgentPipeline::check_and_handle_persona_change(const std::string& transcrip
     }
 
     // Extract persona ID (until end or punctuation)
+    // Handle spaces as underscores (STT often converts underscores to spaces)
     std::string persona_id;
     for (size_t i = after_trigger; i < lower.length(); i++) {
         char c = lower[i];
-        if (std::isalnum(c) || c == '_') {
+        if (std::isalnum(c)) {
             persona_id += c;
-        } else if (std::isspace(c) || c == '.' || c == ',') {
+        } else if (c == '_') {
+            persona_id += c;
+        } else if (c == ' ') {
+            // Check if next char is alphanumeric (continuing the persona name)
+            if (i + 1 < lower.length() && std::isalnum(lower[i + 1])) {
+                persona_id += '_';  // Convert space to underscore
+            } else {
+                break;  // End of persona name
+            }
+        } else if (c == '.' || c == ',' || c == '!' || c == '?') {
             break;
         }
     }
@@ -193,7 +228,7 @@ bool AgentPipeline::check_and_handle_persona_change(const std::string& transcrip
     Logger::info("Persona changed to: " + current_persona_name_ + " (" + persona_id + ")");
 
     // Acknowledge the change
-    std::string ack_text = "Persona changed to " + current_persona_name_ + ". Over.";
+    std::string ack_text = "Switched to " + current_persona_name_ + " persona. Over.";
     response_audio = tts_->synth_vox(ack_text);
     recorder_->record_tts_output(response_audio, utterance_id);
     state_machine_->on_response_ready(response_audio);
