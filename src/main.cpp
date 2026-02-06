@@ -4,6 +4,8 @@
 #include "logger.h"
 #include <signal.h>
 #include <csignal>
+#include <unistd.h>
+#include <fstream>
 
 namespace memo_rf {
 
@@ -29,10 +31,29 @@ int main(int argc, char* argv[]) {
         return 0;
     }
     
-    // Load config
+    // Load config (default: config/config.json relative to binary location)
     std::string config_path = "config/config.json";
     if (argc > 1) {
         config_path = argv[1];
+    } else {
+        // Try to find config relative to executable location
+        std::string exe_dir;
+        char buf[1024];
+        ssize_t len = readlink("/proc/self/exe", buf, sizeof(buf) - 1);
+        if (len != -1) {
+            buf[len] = '\0';
+            exe_dir = std::string(buf);
+            size_t pos = exe_dir.find_last_of('/');
+            if (pos != std::string::npos) {
+                exe_dir = exe_dir.substr(0, pos);
+                // Check parent directory (build/../config)
+                std::string parent_config = exe_dir + "/../config/config.json";
+                std::ifstream test(parent_config);
+                if (test.good()) {
+                    config_path = parent_config;
+                }
+            }
+        }
     }
     
     memo_rf::Config config = memo_rf::Config::load_from_file(config_path);

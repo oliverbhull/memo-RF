@@ -274,6 +274,12 @@ Config Config::load_from_file(const std::string& path) {
     if (j.contains("enable_replay_mode")) cfg.enable_replay_mode = j["enable_replay_mode"];
     if (j.contains("replay_wav_path")) cfg.replay_wav_path = j["replay_wav_path"];
 
+    // Build-time persona override (from -DAGENT_PERSONA=xxx)
+#ifdef AGENT_PERSONA_OVERRIDE
+    cfg.llm.agent_persona = AGENT_PERSONA_OVERRIDE;
+    Logger::info("Using build-time persona override: " + std::string(AGENT_PERSONA_OVERRIDE));
+#endif
+
     // Resolve agent persona from library (persona wins over inline system_prompt)
     resolve_persona(cfg, path);
 

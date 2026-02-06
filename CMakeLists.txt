@@ -10,6 +10,20 @@ if(NOT CMAKE_BUILD_TYPE)
     set(CMAKE_BUILD_TYPE Release)
 endif()
 
+# Agent persona override (compile-time)
+# Usage: cmake -DAGENT_PERSONA=manufacturing ..
+if(AGENT_PERSONA)
+    message(STATUS "Agent persona override: ${AGENT_PERSONA}")
+    add_compile_definitions(AGENT_PERSONA_OVERRIDE="${AGENT_PERSONA}")
+endif()
+
+# Translation target language (compile-time)
+# Usage: cmake -DTRANSLATE_LANGUAGE=Spanish ..
+if(TRANSLATE_LANGUAGE)
+    message(STATUS "Translation target language: ${TRANSLATE_LANGUAGE}")
+    add_compile_definitions(TRANSLATE_LANGUAGE="${TRANSLATE_LANGUAGE}")
+endif()
+
 # Compiler flags
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wall -Wextra")
 set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} -O3 -DNDEBUG")

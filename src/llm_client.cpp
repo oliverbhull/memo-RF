@@ -490,28 +490,21 @@ private:
             cleaned.pop_back();
         }
         
-        // Remove common repetitive patterns
+        // Remove only specific formatting markers (not content phrases)
         std::vector<std::string> patterns_to_remove = {
             "[end conversation]",
             "[pause]",
-            "[end]",
-            "Remember,",
-            "Keep it",
-            "Let's keep",
-            "we're all in this together",
-            "Keep it smooth",
-            "Keep it clear",
-            "Keep it going"
+            "[end]"
         };
-        
+
         for (const auto& pattern : patterns_to_remove) {
             size_t pos = 0;
             while ((pos = cleaned.find(pattern, pos)) != std::string::npos) {
                 // Remove the pattern and any following punctuation/whitespace
                 cleaned.erase(pos, pattern.length());
                 // Remove trailing punctuation/whitespace after pattern
-                while (pos < cleaned.length() && 
-                       (std::isspace(cleaned[pos]) || cleaned[pos] == '.' || 
+                while (pos < cleaned.length() &&
+                       (std::isspace(cleaned[pos]) || cleaned[pos] == '.' ||
                         cleaned[pos] == '!' || cleaned[pos] == '?')) {
                     cleaned.erase(pos, 1);
                 }

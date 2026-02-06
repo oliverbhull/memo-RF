@@ -61,6 +61,13 @@ private:
     void execute_fallback(const Plan& plan, AudioBuffer& response_audio, int utterance_id,
                           bool wait_for_channel_clear);
 
+    /// Check if transcript is a persona change command ("Memo change persona to X")
+    /// If so, load persona and update runtime state. Returns true if handled.
+    bool check_and_handle_persona_change(const std::string& transcript, AudioBuffer& response_audio, int utterance_id);
+
+    /// Load persona from personas.json by ID
+    bool load_persona(const std::string& persona_id, std::string& out_system_prompt, std::string& out_persona_name);
+
     const Config* config_;
     AudioIO* audio_io_;
     VADEndpointing* vad_;
@@ -73,6 +80,12 @@ private:
     SessionRecorder* recorder_;
     std::atomic<bool>* running_;
     std::chrono::steady_clock::time_point* transmission_end_time_;
+
+    /// Runtime persona state (overrides config when set dynamically)
+    std::string current_persona_;        // Current persona ID (e.g. "manufacturing")
+    std::string current_system_prompt_;  // Current system prompt (overrides config)
+    std::string current_persona_name_;   // Current persona display name
+    std::string target_language_;        // Translation target language (for translator persona)
 };
 
 } // namespace memo_rf

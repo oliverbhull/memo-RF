@@ -23,7 +23,7 @@
     "model_name": "qwen2.5:1.5b",
     "translation_model": "translategemma",
     "temperature": 0.7,
-    "agent_persona": "manufacturing`",
+    "agent_persona": "manufacturing",
     "response_language": "en",
     "stop_sequences": ["</s>", "\n\n", "User:", "Human:"],
     "use_manufacturing_router": true

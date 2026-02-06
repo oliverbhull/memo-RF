@@ -11,11 +11,18 @@
 #include "transcript_gate.h"
 #include "utils.h"
 #include "logger.h"
+#include "path_utils.h"
 #include <thread>
 #include <chrono>
 #include <cmath>
 #include <sstream>
 #include <vector>
+#include <fstream>
+#include <algorithm>
+#include <cctype>
+#include <nlohmann/json.hpp>
+
+using json = nlohmann::json;
 
 namespace memo_rf {
 
@@ -44,7 +51,157 @@ AgentPipeline::AgentPipeline(
     , recorder_(recorder)
     , running_(running)
     , transmission_end_time_(transmission_end_time)
-{}
+{
+    // Initialize runtime persona state from config
+    current_persona_ = config_->llm.agent_persona;
+    current_system_prompt_ = config_->llm.system_prompt;
+    current_persona_name_ = config_->llm.persona_name;
+
+    // Initialize translation target language from build flag or config
+#ifdef TRANSLATE_LANGUAGE
+    target_language_ = TRANSLATE_LANGUAGE;
+    Logger::info("Translation target language (build): " + target_language_);
+#else
+    // Map response_language codes to full names for translation
+    if (!config_->llm.response_language.empty()) {
+        std::string lang = config_->llm.response_language;
+        if (lang == "es") target_language_ = "Spanish";
+        else if (lang == "fr") target_language_ = "French";
+        else if (lang == "de") target_language_ = "German";
+        else target_language_ = lang;
+    } else {
+        target_language_ = "Spanish";  // Default for translator persona
+    }
+#endif
+}
+
+bool AgentPipeline::load_persona(const std::string& persona_id, std::string& out_system_prompt, std::string& out_persona_name) {
+    // Find personas.json in config directory
+    std::string personas_path = "config/personas.json";
+    std::ifstream pf(personas_path);
+    if (!pf.is_open()) {
+        Logger::warn("Could not open " + personas_path + " for persona change");
+        return false;
+    }
+
+    json personas_json;
+    try {
+        pf >> personas_json;
+    } catch (const json::exception& e) {
+        Logger::warn("Failed to parse " + personas_path + ": " + std::string(e.what()));
+        return false;
+    }
+
+    if (!personas_json.contains(persona_id) || !personas_json[persona_id].is_object()) {
+        Logger::warn("Persona \"" + persona_id + "\" not found in " + personas_path);
+        return false;
+    }
+
+    const auto& persona = personas_json[persona_id];
+    if (persona.contains("system_prompt") && persona["system_prompt"].is_string()) {
+        out_system_prompt = persona["system_prompt"].get<std::string>();
+    } else {
+        Logger::warn("Persona \"" + persona_id + "\" missing system_prompt");
+        return false;
+    }
+
+    if (persona.contains("name") && persona["name"].is_string()) {
+        out_persona_name = persona["name"].get<std::string>();
+    } else {
+        out_persona_name = persona_id;
+    }
+
+    return true;
+}
+
+bool AgentPipeline::check_and_handle_persona_change(const std::string& transcript, AudioBuffer& response_audio, int utterance_id) {
+    // Normalize transcript for matching
+    std::string lower = transcript;
+    std::transform(lower.begin(), lower.end(), lower.begin(),
+        [](unsigned char c) { return std::tolower(c); });
+
+    // Check for "memo change persona to X" or "memo change persona X"
+    const std::string trigger = "memo change persona";
+    size_t pos = lower.find(trigger);
+    if (pos == std::string::npos) {
+        return false;
+    }
+
+    // Extract persona name after trigger
+    size_t after_trigger = pos + trigger.length();
+    while (after_trigger < lower.length() && std::isspace(lower[after_trigger])) {
+        after_trigger++;
+    }
+
+    // Skip optional "to"
+    if (lower.substr(after_trigger, 3) == "to ") {
+        after_trigger += 3;
+        while (after_trigger < lower.length() && std::isspace(lower[after_trigger])) {
+            after_trigger++;
+        }
+    }
+
+    if (after_trigger >= lower.length()) {
+        Logger::warn("Persona change command detected but no persona specified");
+        std::string error_text = "No persona specified. Over.";
+        response_audio = tts_->synth_vox(error_text);
+        state_machine_->on_response_ready(response_audio);
+        vad_->reset();
+        tx_->transmit(response_audio);
+        return true;
+    }
+
+    // Extract persona ID (until end or punctuation)
+    std::string persona_id;
+    for (size_t i = after_trigger; i < lower.length(); i++) {
+        char c = lower[i];
+        if (std::isalnum(c) || c == '_') {
+            persona_id += c;
+        } else if (std::isspace(c) || c == '.' || c == ',') {
+            break;
+        }
+    }
+
+    if (persona_id.empty()) {
+        Logger::warn("Persona change command detected but could not parse persona ID");
+        std::string error_text = "Could not parse persona. Over.";
+        response_audio = tts_->synth_vox(error_text);
+        state_machine_->on_response_ready(response_audio);
+        vad_->reset();
+        tx_->transmit(response_audio);
+        return true;
+    }
+
+    // Load the persona
+    std::string new_system_prompt;
+    std::string new_persona_name;
+    if (!load_persona(persona_id, new_system_prompt, new_persona_name)) {
+        Logger::warn("Failed to load persona: " + persona_id);
+        std::string error_text = "Persona not found: " + persona_id + ". Over.";
+        response_audio = tts_->synth_vox(error_text);
+        state_machine_->on_response_ready(response_audio);
+        vad_->reset();
+        tx_->transmit(response_audio);
+        return true;
+    }
+
+    // Update runtime state
+    current_persona_ = persona_id;
+    current_system_prompt_ = new_system_prompt;
+    current_persona_name_ = new_persona_name;
+
+    Logger::info("Persona changed to: " + current_persona_name_ + " (" + persona_id + ")");
+
+    // Acknowledge the change
+    std::string ack_text = "Persona changed to " + current_persona_name_ + ". Over.";
+    response_audio = tts_->synth_vox(ack_text);
+    recorder_->record_tts_output(response_audio, utterance_id);
+    state_machine_->on_response_ready(response_audio);
+    vad_->reset();
+    tx_->transmit(response_audio);
+
+    return true;
+}
 
 void AgentPipeline::handle_blank_behavior() {
     const std::string& behavior = config_->transcript_blank_behavior.behavior;
@@ -149,6 +306,11 @@ void AgentPipeline::handle_speech_end(
         return;
     }
 
+    // Check for persona change command before routing
+    if (check_and_handle_persona_change(current_transcript.text, response_audio, utterance_id)) {
+        return;
+    }
+
     if (config_->wake_word.enabled) {
         std::string lower = utils::normalize_copy(current_transcript.text);
         const std::string wake_phrase = "hey memo";
@@ -206,7 +368,9 @@ void AgentPipeline::execute_plan(const Plan& plan, const Transcript& transcript,
                                  AudioBuffer& pending_response_audio) {
     (void)pending_response_audio;
     if (plan.type == PlanType::NoOp) {
-        LOG_ROUTER("NoOp - doing nothing");
+        LOG_ROUTER("NoOp - returning to IdleListening");
+        vad_->reset();
+        state_machine_->reset();
         return;
     }
     if (plan.type == PlanType::Speak) {
@@ -258,14 +422,21 @@ void AgentPipeline::execute_llm_path(const Plan& plan, const Transcript& transcr
     std::vector<std::string> empty_history;
     std::string model_override;
     std::string system_prompt_override;
-    if (config_->llm.agent_persona == "translator" && !config_->llm.translation_model.empty()) {
-        model_override = config_->llm.translation_model;
-        std::string lang = config_->llm.response_language.empty() ? "Spanish" : config_->llm.response_language;
-        if (lang == "es") lang = "Spanish";
-        else if (lang == "fr") lang = "French";
-        else if (lang == "de") lang = "German";
-        system_prompt_override = "You are a professional English to " + lang + " translator. "
-            "Output only the " + lang + " translation, no explanations. End transmissions with \"over\".";
+
+    // Use runtime persona state for system prompt
+    if (current_persona_ == "translator") {
+        // Translation mode: tight prompt for verbatim translation
+        // Note: Not using translation_model anymore - using Qwen for translation
+        system_prompt_override =
+            "Translate this English radio transmission to " + target_language_ + " verbatim. "
+            "Output ONLY the " + target_language_ + " translation. "
+            "Do not add explanations, preamble, or commentary. "
+            "Preserve the exact meaning and radio terminology. "
+            "End with \"over\".";
+        LOG_LLM("Translation mode - target language: " + target_language_);
+    } else {
+        // Use current runtime system prompt (may have been changed dynamically)
+        system_prompt_override = current_system_prompt_;
     }
 
     LOG_LLM(std::string("Calling LLM with prompt: \"") + llm_prompt + "\"");
@@ -309,7 +480,7 @@ void AgentPipeline::execute_llm_path(const Plan& plan, const Transcript& transcr
             : config_->llm.truncation.fallback_phrase;
     }
 
-    std::string response_text = utils::strip_trailing_over(utils::trim_copy(llm_response));
+    std::string response_text = utils::trim_copy(llm_response);
     if (response_text.empty()) response_text = "Stand by.";
     LOG_TTS("Synthesizing response...");
     auto tts_start = std::chrono::steady_clock::now();
@@ -336,7 +507,7 @@ void AgentPipeline::execute_llm_path(const Plan& plan, const Transcript& transcr
 
 void AgentPipeline::execute_fallback(const Plan& plan, AudioBuffer& response_audio, int utterance_id,
                                      bool wait_for_channel_clear) {
-    std::string text = utils::strip_trailing_over(utils::trim_copy(plan.fallback_text));
+    std::string text = utils::trim_copy(plan.fallback_text);
     if (text.empty()) text = "Stand by.";
     LOG_ROUTER(std::string("Fallback - speaking: \"") + text + "\"");
     response_audio = tts_->synth_vox(text);
