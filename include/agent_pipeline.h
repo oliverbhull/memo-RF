@@ -3,6 +3,7 @@
 #include "common.h"
 #include "config.h"
 #include "router.h"
+#include "action_dispatcher.h"
 #include <chrono>
 #include <atomic>
 #include <memory>
@@ -86,6 +87,9 @@ private:
     std::string current_system_prompt_;  // Current system prompt (overrides config)
     std::string current_persona_name_;   // Current persona display name
     std::string target_language_;        // Translation target language (for translator persona)
+
+    /// Plugin system: data-driven command dispatch (loaded from config/plugins/*.json)
+    std::unique_ptr<ActionDispatcher> action_dispatcher_;
 };
 
 } // namespace memo_rf

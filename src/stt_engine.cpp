@@ -58,6 +58,11 @@ public:
         params.offset_ms = 0;
         params.no_context = true;
         params.single_segment = true;
+
+        // Vocab boosting: bias Whisper toward domain-specific words from plugins
+        if (!initial_prompt_.empty()) {
+            params.initial_prompt = initial_prompt_.c_str();
+        }
         
         // Convert audio buffer to float
         std::vector<float> pcmf32(segment.size());
@@ -108,10 +113,18 @@ public:
         return ready_;
     }
 
+    void set_initial_prompt(const std::string& prompt) {
+        initial_prompt_ = prompt;
+        if (!prompt.empty()) {
+            LOG_STT("Vocab boost set (" + std::to_string(prompt.size()) + " chars)");
+        }
+    }
+
 private:
     STTConfig config_;
     whisper_context* ctx_;
     bool ready_;
+    std::string initial_prompt_;  ///< Plugin vocab for Whisper initial_prompt
 };
 
 STTEngine::STTEngine(const STTConfig& config) 
@@ -125,6 +138,10 @@ Transcript STTEngine::transcribe(const AudioBuffer& segment) {
 
 bool STTEngine::is_ready() const {
     return pimpl_->is_ready();
+}
+
+void STTEngine::set_initial_prompt(const std::string& prompt) {
+    pimpl_->set_initial_prompt(prompt);
 }
 
 } // namespace memo_rf

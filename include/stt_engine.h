@@ -22,6 +22,10 @@ public:
     // Check if engine is ready
     bool is_ready() const;
 
+    // Set initial_prompt for vocabulary boosting (merged from plugins).
+    // This biases Whisper toward recognizing domain-specific words.
+    void set_initial_prompt(const std::string& prompt);
+
 private:
     class Impl;
     std::unique_ptr<Impl> pimpl_;

@@ -123,6 +123,11 @@ struct ToolsConfig {
     size_t max_concurrent = 1;          // Maximum concurrent tool executions
 };
 
+/// Plugin system: data-driven command plugins loaded from JSON config files.
+struct PluginConfig {
+    std::vector<std::string> config_files;  ///< Paths to plugin JSON files (e.g. "config/plugins/muni.json")
+};
+
 /// Conversation memory: when enabled, session history is kept for multi-turn context.
 struct MemoryConfig {
     bool enabled = true;
@@ -142,6 +147,7 @@ struct Config {
     TTSConfig tts;
     TXConfig tx;
     ToolsConfig tools;
+    PluginConfig plugins;
     MemoryConfig memory;
     WakeWordConfig wake_word;
     

@@ -12,6 +12,7 @@
 #include "utils.h"
 #include "logger.h"
 #include "path_utils.h"
+#include "plugins/json_command_plugin.h"
 #include <thread>
 #include <chrono>
 #include <cmath>
@@ -73,6 +74,34 @@ AgentPipeline::AgentPipeline(
         target_language_ = "Spanish";  // Default for translator persona
     }
 #endif
+
+    // Load action plugins from config
+    action_dispatcher_ = std::make_unique<ActionDispatcher>();
+    for (const auto& plugin_path : config_->plugins.config_files) {
+        try {
+            auto plugin = std::make_shared<JsonCommandPlugin>(plugin_path);
+            action_dispatcher_->register_plugin(plugin);
+            Logger::info("Loaded action plugin: " + plugin->name() + " from " + plugin_path);
+        } catch (const std::exception& e) {
+            Logger::warn("Failed to load plugin from " + plugin_path + ": " + std::string(e.what()));
+        }
+    }
+
+    // Merge vocab from all plugins and set on STT engine for vocab boosting
+    if (action_dispatcher_->size() > 0 && stt_) {
+        std::string merged_vocab;
+        for (const auto& plugin : action_dispatcher_->plugins()) {
+            for (const auto& word : plugin->vocab()) {
+                if (!merged_vocab.empty()) merged_vocab += ", ";
+                merged_vocab += word;
+            }
+        }
+        if (!merged_vocab.empty()) {
+            stt_->set_initial_prompt(merged_vocab);
+            Logger::info("STT vocab boost from " + std::to_string(action_dispatcher_->size())
+                + " plugin(s): " + std::to_string(merged_vocab.size()) + " chars");
+        }
+    }
 }
 
 bool AgentPipeline::load_persona(const std::string& persona_id, std::string& out_system_prompt, std::string& out_persona_name) {
@@ -344,6 +373,24 @@ void AgentPipeline::handle_speech_end(
     // Check for persona change command before routing
     if (check_and_handle_persona_change(current_transcript.text, response_audio, utterance_id)) {
         return;
+    }
+
+    // Check action plugins (data-driven command dispatch from JSON config)
+    if (action_dispatcher_ && action_dispatcher_->size() > 0) {
+        ActionResult action_result;
+        if (action_dispatcher_->dispatch(current_transcript.text, action_result)) {
+            std::string text = utils::ensure_ends_with_over(action_result.response_text);
+            response_audio = tts_->synth_vox(text);
+            AudioBuffer end_tone = tts_->get_end_tone_buffer();
+            if (!end_tone.empty()) {
+                response_audio.insert(response_audio.end(), end_tone.begin(), end_tone.end());
+            }
+            recorder_->record_tts_output(response_audio, utterance_id);
+            state_machine_->on_response_ready(response_audio);
+            vad_->reset();
+            tx_->transmit(response_audio);
+            return;
+        }
     }
 
     if (config_->wake_word.enabled) {

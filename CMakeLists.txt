@@ -221,6 +221,8 @@ set(LEGACY_SOURCES
     src/session_recorder.cpp
     src/config.cpp
     src/logger.cpp
+    src/action_dispatcher.cpp
+    src/plugins/json_command_plugin.cpp
 )
 
 # All sources
@@ -266,6 +268,9 @@ set(LEGACY_HEADERS
     include/logger.h
     include/utils.h
     include/transcript_gate.h
+    include/action_plugin.h
+    include/action_dispatcher.h
+    include/plugins/json_command_plugin.h
 )
 
 # All headers

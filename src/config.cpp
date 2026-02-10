@@ -261,6 +261,19 @@ Config Config::load_from_file(const std::string& path) {
         }
     }
 
+    // Plugin config (data-driven command plugins)
+    if (j.contains("plugins")) {
+        auto& p = j["plugins"];
+        if (p.contains("config_files") && p["config_files"].is_array()) {
+            cfg.plugins.config_files.clear();
+            for (const auto& path_val : p["config_files"]) {
+                if (path_val.is_string()) {
+                    cfg.plugins.config_files.push_back(path_val.get<std::string>());
+                }
+            }
+        }
+    }
+
     // Memory config (conversation history for multi-turn)
     if (j.contains("memory")) {
         auto& mem = j["memory"];
@@ -386,6 +399,10 @@ void Config::save_to_file(const std::string& path) const {
     j["tools"]["enabled"] = tools.enabled;
     j["tools"]["timeout_ms"] = tools.timeout_ms;
     j["tools"]["max_concurrent"] = tools.max_concurrent;
+
+    if (!plugins.config_files.empty()) {
+        j["plugins"]["config_files"] = plugins.config_files;
+    }
     
     j["session_log_dir"] = session_log_dir;
     j["enable_replay_mode"] = enable_replay_mode;
