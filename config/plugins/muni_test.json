@@ -1,0 +1,119 @@
+{
+  "plugin": "muni",
+  "priority": 50,
+  "api": {
+    "base_url": "http://localhost:4890",
+    "api_key": "test-key-123",
+    "default_rover_id": "frog-0"
+  },
+  "vocab": [
+    "frog-zero", "frog-one", "frog-two",
+    "rover", "depot", "muni", "dispatch",
+    "navigate", "position", "coordinates",
+    "autonomous", "emergency stop",
+    "estop", "e-stop"
+  ],
+  "commands": [
+    {
+      "id": "estop",
+      "priority": 1,
+      "phrases": [
+        "emergency stop", "e stop", "e-stop",
+        "stop the robot", "stop the rover",
+        "stop", "halt", "freeze", "kill it", "abort"
+      ],
+      "api_endpoint": "/rovers/{rover_id}/command",
+      "api_method": "POST",
+      "api_body": { "type": "estop" },
+      "confirm_text": "Emergency stop activated."
+    },
+    {
+      "id": "estop_release",
+      "priority": 2,
+      "phrases": [
+        "release stop", "release e stop", "clear stop",
+        "release", "resume", "unstop", "start up"
+      ],
+      "api_endpoint": "/rovers/{rover_id}/command",
+      "api_method": "POST",
+      "api_body": { "type": "estop_release" },
+      "confirm_text": "E-stop released. Rover is idle."
+    },
+    {
+      "id": "move_forward",
+      "priority": 5,
+      "phrases": [
+        "move forward", "go forward", "forward",
+        "move the robot forward", "robot forward",
+        "move ahead", "go ahead", "advance"
+      ],
+      "params": [
+        { "name": "distance", "type": "float", "extract": "first_number", "description": "Distance in meters" }
+      ],
+      "api_endpoint": "/rovers/{rover_id}/command",
+      "api_method": "POST",
+      "api_body": { "type": "set_goal", "x": 0, "y": "{distance}" },
+      "confirm_text": "Roger, moving forward {distance} meters."
+    },
+    {
+      "id": "move_backward",
+      "priority": 5,
+      "phrases": [
+        "move backward", "go backward", "backward", "back up",
+        "move the robot backward", "robot backward",
+        "reverse", "move back", "go back"
+      ],
+      "params": [
+        { "name": "distance", "type": "float", "extract": "first_number", "description": "Distance in meters" }
+      ],
+      "api_endpoint": "/rovers/{rover_id}/command",
+      "api_method": "POST",
+      "api_body": { "type": "set_goal", "x": 0, "y": "-{distance}" },
+      "confirm_text": "Roger, moving backward {distance} meters."
+    },
+    {
+      "id": "set_goal",
+      "priority": 10,
+      "phrases": [
+        "go to position", "move to position",
+        "navigate to position", "navigate to",
+        "go to", "move to", "send to", "head to"
+      ],
+      "params": [
+        { "name": "x", "type": "float", "extract": "first_number", "description": "X coordinate in meters" },
+        { "name": "y", "type": "float", "extract": "second_number", "description": "Y coordinate in meters" }
+      ],
+      "api_endpoint": "/rovers/{rover_id}/command",
+      "api_method": "POST",
+      "api_body": { "type": "set_goal", "x": "{x}", "y": "{y}" },
+      "confirm_text": "Roger, navigating to {x} {y}."
+    },
+    {
+      "id": "set_mode",
+      "priority": 10,
+      "phrases": [
+        "set mode to", "set mode",
+        "switch to", "change to", "change mode to",
+        "put in", "put the robot in", "put the rover in",
+        "enter"
+      ],
+      "params": [
+        {
+          "name": "mode",
+          "type": "enum",
+          "extract": "keyword_after_phrase",
+          "values": {
+            "idle": ["idle", "standby", "stand by"],
+            "autonomous": ["autonomous", "autonomy", "auto", "self drive", "self-drive"],
+            "sleep": ["sleep", "shut down", "power down", "hibernate"],
+            "dance": ["dance", "party", "boogie"]
+          }
+        }
+      ],
+      "api_endpoint": "/rovers/{rover_id}/command",
+      "api_method": "POST",
+      "api_body": { "type": "set_mode", "mode": "{mode}" },
+      "confirm_text": "Mode set to {mode}."
+    }
+  ]
+}

@@ -192,7 +192,7 @@ bool JsonCommandPlugin::try_handle(const std::string& transcript, ActionResult& 
             Logger::info("[JsonCommandPlugin] Command \"" + cmd.id + "\" succeeded (HTTP " + std::to_string(status_code) + ")");
         } else {
             result.success = false;
-            result.response_text = "Command failed. " + (cmd.id == "estop" ? "Emergency stop may not have been received." : "Robot may be offline.");
+            result.response_text = std::string("Command failed. ") + (cmd.id == "estop" ? "Emergency stop may not have been received." : "Robot may be offline.");
             result.error = http_ok
                 ? "HTTP " + std::to_string(status_code) + ": " + response_body
                 : "Connection failed";

@@ -379,6 +379,8 @@ void AgentPipeline::handle_speech_end(
     if (action_dispatcher_ && action_dispatcher_->size() > 0) {
         ActionResult action_result;
         if (action_dispatcher_->dispatch(current_transcript.text, action_result)) {
+            Logger::info("*** PLUGIN COMMAND EXECUTED ***");
+            Logger::info("Response: " + action_result.response_text);
             std::string text = utils::ensure_ends_with_over(action_result.response_text);
             response_audio = tts_->synth_vox(text);
             AudioBuffer end_tone = tts_->get_end_tone_buffer();
