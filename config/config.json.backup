@@ -73,5 +73,6 @@
   },
   "session_log_dir": "sessions",
   "enable_replay_mode": false,
-  "replay_wav_path": ""
+  "replay_wav_path": "",
+  "feed_server_url": "http://localhost:5050/api/feed/notify"
 }

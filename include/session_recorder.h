@@ -16,7 +16,7 @@ struct SessionEvent {
 
 class SessionRecorder {
 public:
-    SessionRecorder(const std::string& session_dir);
+    SessionRecorder(const std::string& session_dir, const std::string& feed_server_url = "");
     ~SessionRecorder();
     
     // Start new session

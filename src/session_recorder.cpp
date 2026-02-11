@@ -1,5 +1,6 @@
 #include "session_recorder.h"
 #include "common.h"
+#include "logger.h"
 #include <fstream>
 #include <sstream>
 #include <iomanip>
@@ -8,14 +9,16 @@
 #include <algorithm>
 #include <chrono>
 #include <map>
+#include <curl/curl.h>
+#include <thread>
 
 namespace memo_rf {
 
 class SessionRecorder::Impl {
 public:
-    Impl(const std::string& session_dir)
-        : session_dir_(session_dir), session_id_(), session_started_(false),
-          utterance_counter_(0), raw_audio_buffer_() {
+    Impl(const std::string& session_dir, const std::string& feed_server_url)
+        : session_dir_(session_dir), session_id_(), feed_server_url_(feed_server_url),
+          session_started_(false), utterance_counter_(0), raw_audio_buffer_() {
         std::filesystem::create_directories(session_dir_);
     }
     
@@ -65,6 +68,9 @@ public:
         event.data = transcript.text;
         events_.push_back(event);
         write_session_log_incremental();
+
+        // Notify feed server (non-blocking)
+        notify_feed_server("transcript", transcript.text);
     }
     
     void record_llm_prompt(const std::string& prompt, int utterance_id) {
@@ -87,6 +93,9 @@ public:
         event.data = response;
         events_.push_back(event);
         write_session_log_incremental();
+
+        // Notify feed server (non-blocking)
+        notify_feed_server("llm_response", response);
     }
     
     void record_tts_output(const AudioBuffer& audio, int utterance_id) {
@@ -129,6 +138,54 @@ public:
 private:
     std::string get_session_path() const {
         return session_dir_ + "/" + session_id_;
+    }
+
+    // Notify feed server of new event (fire-and-forget, non-blocking)
+    void notify_feed_server(const std::string& event_type, const std::string& data) {
+        if (feed_server_url_.empty()) return;  // Not configured
+
+        // Escape JSON before lambda
+        std::string escaped_data = escape_json(data);
+
+        // Launch in detached thread to avoid blocking
+        std::thread([url = feed_server_url_, sid = session_id_, etype = event_type, d = escaped_data, ts = ms_since(session_start_time_), meta = metadata_]() {
+            CURL* curl = curl_easy_init();
+            if (!curl) return;
+
+            // Build JSON payload
+            std::string persona = meta.count("persona_name") ? meta.at("persona_name") :
+                                 (meta.count("persona") ? meta.at("persona") : "");
+            std::string language = meta.count("response_language") ? meta.at("response_language") : "en";
+
+            std::ostringstream json;
+            json << "{"
+                 << "\"session_id\":\"" << sid << "\","
+                 << "\"timestamp_ms\":" << ts << ","
+                 << "\"event_type\":\"" << etype << "\","
+                 << "\"data\":\"" << d << "\","
+                 << "\"persona_name\":\"" << persona << "\","
+                 << "\"language\":\"" << language << "\""
+                 << "}";
+
+            std::string payload = json.str();
+
+            // Set curl options
+            curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
+            curl_easy_setopt(curl, CURLOPT_POSTFIELDS, payload.c_str());
+            curl_easy_setopt(curl, CURLOPT_TIMEOUT_MS, 500L);  // 500ms timeout
+            curl_easy_setopt(curl, CURLOPT_NOSIGNAL, 1L);
+
+            struct curl_slist* headers = nullptr;
+            headers = curl_slist_append(headers, "Content-Type: application/json");
+            curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
+
+            // Perform request (ignore errors - fire-and-forget)
+            curl_easy_perform(curl);
+
+            // Cleanup
+            curl_slist_free_all(headers);
+            curl_easy_cleanup(curl);
+        }).detach();
     }
     
     void write_wav(const std::string& path, const AudioBuffer& audio) {
@@ -213,6 +270,7 @@ private:
     
     std::string session_dir_;
     std::string session_id_;
+    std::string feed_server_url_;
     bool session_started_;
     int utterance_counter_;
     AudioBuffer raw_audio_buffer_;
@@ -221,8 +279,8 @@ private:
     TimePoint session_start_time_;
 };
 
-SessionRecorder::SessionRecorder(const std::string& session_dir) 
-    : pimpl_(std::make_unique<Impl>(session_dir)) {}
+SessionRecorder::SessionRecorder(const std::string& session_dir, const std::string& feed_server_url)
+    : pimpl_(std::make_unique<Impl>(session_dir, feed_server_url)) {}
 
 SessionRecorder::~SessionRecorder() = default;
 

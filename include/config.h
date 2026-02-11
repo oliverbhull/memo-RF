@@ -154,7 +154,8 @@ struct Config {
     std::string session_log_dir = "sessions";
     bool enable_replay_mode = false;
     std::string replay_wav_path;
-    
+    std::string feed_server_url = "";  ///< Optional: POST events to feed server (e.g. "http://localhost:5050/api/feed/notify")
+
     static Config load_from_file(const std::string& path);
     void save_to_file(const std::string& path) const;
 };

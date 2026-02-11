@@ -215,7 +215,13 @@ async function loadFeed() {
 
         feedContainer.innerHTML = data.exchanges.map(ex => {
             const date = new Date(ex.timestamp_ms);
-            const personaName = ex.persona_name || ex.persona || 'Unknown';
+            // Check both persona fields and trim whitespace
+            let personaName = 'Unknown';
+            if (ex.persona_name && ex.persona_name.trim()) {
+                personaName = ex.persona_name.trim();
+            } else if (ex.persona && ex.persona.trim()) {
+                personaName = ex.persona.trim();
+            }
             const language = ex.language || 'en';
             const langLabel = {en: 'EN', es: 'ES', fr: 'FR', de: 'DE'}[language] || language.toUpperCase();
             const hasResponse = ex.response && ex.response !== '(no response)';

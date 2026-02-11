@@ -27,8 +27,8 @@
     "model_name": "mistral:instruct",
     "translation_model": "translategemma",
     "temperature": 0.7,
-    "agent_persona": "translator",
-    "response_language": "de",
+    "agent_persona": "security",
+    "response_language": "en",
     "stop_sequences": [
       "</s>",
       "\n\n",
@@ -73,5 +73,6 @@
   },
   "session_log_dir": "sessions",
   "enable_replay_mode": false,
-  "replay_wav_path": ""
+  "replay_wav_path": "",
+  "feed_server_url": "http://localhost:5050/api/feed/notify"
 }

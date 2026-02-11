@@ -286,6 +286,7 @@ Config Config::load_from_file(const std::string& path) {
     if (j.contains("session_log_dir")) cfg.session_log_dir = j["session_log_dir"];
     if (j.contains("enable_replay_mode")) cfg.enable_replay_mode = j["enable_replay_mode"];
     if (j.contains("replay_wav_path")) cfg.replay_wav_path = j["replay_wav_path"];
+    if (j.contains("feed_server_url")) cfg.feed_server_url = j["feed_server_url"];
 
     // Build-time persona override (from -DAGENT_PERSONA=xxx)
 #ifdef AGENT_PERSONA_OVERRIDE
@@ -407,6 +408,7 @@ void Config::save_to_file(const std::string& path) const {
     j["session_log_dir"] = session_log_dir;
     j["enable_replay_mode"] = enable_replay_mode;
     j["replay_wav_path"] = replay_wav_path;
+    j["feed_server_url"] = feed_server_url;
     
     std::ofstream file(path);
     if (file.is_open()) {

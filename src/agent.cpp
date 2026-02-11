@@ -51,7 +51,7 @@ public:
         tts_ = std::make_unique<TTSEngine>(config_.tts);
         tx_ = std::make_unique<TXController>(config_.tx);
         state_machine_ = std::make_unique<StateMachine>(config_.wake_word.enabled);
-        recorder_ = std::make_unique<SessionRecorder>(config_.session_log_dir);
+        recorder_ = std::make_unique<SessionRecorder>(config_.session_log_dir, config_.feed_server_url);
         
         // Set up TX controller
         tx_->set_audio_io(audio_io_.get());
@@ -303,19 +303,41 @@ private:
             if (current_state == State::ReceivingSpeech) {
                 current_utterance = vad_->get_current_segment();
                 speech_frame_count_++;
-                
+
+                // Calculate RMS for current frame
+                float sum_sq = 0.0f;
+                for (auto s : frame) {
+                    float normalized = static_cast<float>(s) / 32768.0f;
+                    sum_sq += normalized * normalized;
+                }
+                float rms = frame.empty() ? 0.0f : std::sqrt(sum_sq / frame.size());
+
                 // Log periodically to show speech is happening (~every 1 second)
                 auto now = std::chrono::steady_clock::now();
                 auto elapsed_since_last_log = std::chrono::duration_cast<std::chrono::milliseconds>(
                     now - last_speech_log_time_).count();
-                
+                auto speech_duration = std::chrono::duration_cast<std::chrono::milliseconds>(
+                    now - speech_start_time_).count();
+
                 if (elapsed_since_last_log >= 1000) { // Log every 1 second
-                    auto speech_duration = std::chrono::duration_cast<std::chrono::milliseconds>(
-                        now - speech_start_time_).count();
                     std::ostringstream oss;
-                    oss << "Receiving speech... (" << speech_duration << "ms)";
+                    oss << "Receiving speech... (" << speech_duration << "ms, rms="
+                        << rms << ", threshold=" << config_.vad.threshold
+                        << ", silence_threshold=" << config_.vad.silence_threshold << ")";
                     Logger::info(oss.str());
                     last_speech_log_time_ = now;
+                }
+
+                // Safety timeout: force end speech after 30 seconds
+                constexpr int64_t MAX_SPEECH_DURATION_MS = 30000;
+                if (speech_duration >= MAX_SPEECH_DURATION_MS) {
+                    Logger::warn("Speech timeout reached (" + std::to_string(speech_duration)
+                        + "ms) - forcing speech end. Last RMS: " + std::to_string(rms));
+                    vad_->reset();
+                    state_machine_->on_vad_event(VADEvent::SpeechEnd);
+                    pipeline_->handle_speech_end(current_utterance, current_transcript,
+                                                current_plan, response_audio, utterance_id,
+                                                last_speech_end_time_, pending_response_audio_);
                 }
             } else {
                 // Reset counter when not in ReceivingSpeech
