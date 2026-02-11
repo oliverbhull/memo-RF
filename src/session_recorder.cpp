@@ -7,12 +7,13 @@
 #include <filesystem>
 #include <algorithm>
 #include <chrono>
+#include <map>
 
 namespace memo_rf {
 
 class SessionRecorder::Impl {
 public:
-    Impl(const std::string& session_dir) 
+    Impl(const std::string& session_dir)
         : session_dir_(session_dir), session_id_(), session_started_(false),
           utterance_counter_(0), raw_audio_buffer_() {
         std::filesystem::create_directories(session_dir_);
@@ -28,11 +29,18 @@ public:
         utterance_counter_ = 0;
         events_.clear();
         raw_audio_buffer_.clear();
+        metadata_.clear();
         session_start_time_ = std::chrono::steady_clock::now();
-        
+
         // Create session directory
         std::string session_path = session_dir_ + "/" + session_id_;
         std::filesystem::create_directories(session_path);
+    }
+
+    void set_session_metadata(const std::string& key, const std::string& value) {
+        if (!session_started_) return;
+        metadata_[key] = value;
+        write_session_log_incremental();
     }
     
     void record_input_frame(const AudioFrame& frame) {
@@ -50,32 +58,35 @@ public:
     
     void record_transcript(const Transcript& transcript, int utterance_id) {
         if (!session_started_) return;
-        
+
         SessionEvent event;
         event.timestamp_ms = ms_since(session_start_time_);
         event.event_type = "transcript";
         event.data = transcript.text;
         events_.push_back(event);
+        write_session_log_incremental();
     }
     
     void record_llm_prompt(const std::string& prompt, int utterance_id) {
         if (!session_started_) return;
-        
+
         SessionEvent event;
         event.timestamp_ms = ms_since(session_start_time_);
         event.event_type = "llm_prompt";
         event.data = prompt;
         events_.push_back(event);
+        write_session_log_incremental();
     }
     
     void record_llm_response(const std::string& response, int utterance_id) {
         if (!session_started_) return;
-        
+
         SessionEvent event;
         event.timestamp_ms = ms_since(session_start_time_);
         event.event_type = "llm_response";
         event.data = response;
         events_.push_back(event);
+        write_session_log_incremental();
     }
     
     void record_tts_output(const AudioBuffer& audio, int utterance_id) {
@@ -88,12 +99,13 @@ public:
     
     void record_event(const std::string& event_type, const std::string& data) {
         if (!session_started_) return;
-        
+
         SessionEvent event;
         event.timestamp_ms = ms_since(session_start_time_);
         event.event_type = event_type;
         event.data = data;
         events_.push_back(event);
+        write_session_log_incremental();
     }
     
     void finalize_session() {
@@ -158,11 +170,11 @@ private:
     void write_session_log(const std::string& path) {
         std::ofstream file(path);
         if (!file.is_open()) return;
-        
+
         file << "{\n";
         file << "  \"session_id\": \"" << session_id_ << "\",\n";
         file << "  \"events\": [\n";
-        
+
         for (size_t i = 0; i < events_.size(); i++) {
             file << "    {\n";
             file << "      \"timestamp_ms\": " << events_[i].timestamp_ms << ",\n";
@@ -175,9 +187,15 @@ private:
             if (i < events_.size() - 1) file << ",";
             file << "\n";
         }
-        
+
         file << "  ]\n";
         file << "}\n";
+    }
+
+    void write_session_log_incremental() {
+        if (!session_started_) return;
+        std::string log_filename = get_session_path() + "/session_log.json";
+        write_session_log(log_filename);
     }
     
     std::string escape_json(const std::string& str) {
@@ -199,6 +217,7 @@ private:
     int utterance_counter_;
     AudioBuffer raw_audio_buffer_;
     std::vector<SessionEvent> events_;
+    std::map<std::string, std::string> metadata_;
     TimePoint session_start_time_;
 };
 
@@ -209,6 +228,10 @@ SessionRecorder::~SessionRecorder() = default;
 
 void SessionRecorder::start_session() {
     pimpl_->start_session();
+}
+
+void SessionRecorder::set_session_metadata(const std::string& key, const std::string& value) {
+    pimpl_->set_session_metadata(key, value);
 }
 
 void SessionRecorder::record_input_frame(const AudioFrame& frame) {

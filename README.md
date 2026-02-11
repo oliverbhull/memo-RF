@@ -166,6 +166,63 @@ Each session creates a directory in `sessions/` with:
 - `tts_N.wav`: TTS output audio
 - `session_log.json`: Complete event log with timings
 
+## Feed UI
+
+The feed server provides a web UI to view radio transmissions and agent responses in real-time.
+
+### Starting the Feed Server
+
+The feed server starts automatically when you run `./run.sh`:
+
+```bash
+./run.sh
+```
+
+By default, the feed UI is available at:
+- **Local access**: http://localhost:5050
+- **Network access**: http://YOUR_DEVICE_IP:5050
+
+### Configuration
+
+Environment variables:
+- `MEMO_RF_NO_FEED_SERVER=1` - Disable the feed server
+- `MEMO_RF_FEED_PORT=5050` - Change the port (default: 5050)
+
+Example:
+```bash
+# Run without feed server
+MEMO_RF_NO_FEED_SERVER=1 ./run.sh
+
+# Run feed server on custom port
+MEMO_RF_FEED_PORT=8080 ./run.sh
+```
+
+### Running Feed Server Standalone
+
+You can also run the feed server independently:
+
+```bash
+python3 scripts/feed_server.py [--port PORT] [--host HOST] [--sessions-dir DIR]
+```
+
+### Accessing from Remote Device
+
+To access the feed from another device on your network (e.g., from MacBook when running on Jetson):
+
+1. Find the device IP running memo-rf:
+   ```bash
+   hostname -I  # or 'ip addr' on Linux
+   ```
+
+2. Open browser on remote device: `http://DEVICE_IP:5050`
+
+3. If using a firewall, allow port 5050:
+   ```bash
+   sudo ufw allow 5050/tcp
+   ```
+
+**Note**: The feed displays completed sessions only. New transmissions appear after each session is finalized.
+
 ## Replay Mode
 
 (To be implemented) Replay a session from recorded audio:

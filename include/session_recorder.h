@@ -21,7 +21,10 @@ public:
     
     // Start new session
     void start_session();
-    
+
+    // Set session metadata (persona, language, etc.)
+    void set_session_metadata(const std::string& key, const std::string& value);
+
     // Record raw input audio frame
     void record_input_frame(const AudioFrame& frame);
     

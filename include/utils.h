@@ -3,6 +3,7 @@
 #include <string>
 #include <algorithm>
 #include <cctype>
+#include <vector>
 
 namespace memo_rf {
 
@@ -74,6 +75,42 @@ inline bool is_blank_transcript(const std::string& text, const std::string& blan
     std::string t = trim_copy(text);
     if (t.empty()) return true;
     if (!blank_sentinel.empty() && t == blank_sentinel) return true;
+
+    // Filter common noise patterns that STT transcribes from static/silence
+    std::string lower = t;
+    std::transform(lower.begin(), lower.end(), lower.begin(),
+        [](unsigned char c) { return std::tolower(c); });
+
+    // Remove parentheses and other punctuation for pattern matching
+    std::string cleaned;
+    for (char c : lower) {
+        if (std::isalnum(c) || std::isspace(c)) {
+            cleaned += c;
+        }
+    }
+    cleaned = trim_copy(cleaned);
+
+    // Common noise patterns
+    static const std::vector<std::string> noise_patterns = {
+        "static", "silence", "noise", "inaudible", "unclear",
+        "background noise", "radio static", "interference",
+        "nothing", "blank", "mute", "hiss", "hissing",
+        "clicking", "beeping", "buzzing", "crackling", "humming",
+        "whooshing", "popping", "rustling", "crackle", "buzz",
+        "beep", "click", "pop", "hum", "whoosh", "rustle"
+    };
+
+    for (const auto& pattern : noise_patterns) {
+        if (cleaned == pattern || cleaned.find(pattern) != std::string::npos) {
+            return true;
+        }
+    }
+
+    // Filter very short transcripts (likely noise)
+    if (cleaned.length() < 3) {
+        return true;
+    }
+
     return false;
 }
 

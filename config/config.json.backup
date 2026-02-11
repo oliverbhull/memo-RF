@@ -27,8 +27,8 @@
     "model_name": "mistral:instruct",
     "translation_model": "translategemma",
     "temperature": 0.7,
-    "agent_persona": "translator",
-    "response_language": "de",
+    "agent_persona": "municipal",
+    "response_language": "en",
     "stop_sequences": [
       "</s>",
       "\n\n",

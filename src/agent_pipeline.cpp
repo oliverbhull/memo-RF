@@ -258,6 +258,8 @@ bool AgentPipeline::check_and_handle_persona_change(const std::string& transcrip
 
     // Acknowledge the change
     std::string ack_text = "Switched to " + current_persona_name_ + " persona. Over.";
+    // Record the response text so it appears in the feed
+    recorder_->record_llm_response(ack_text, utterance_id);
     response_audio = tts_->synth_vox(ack_text);
     recorder_->record_tts_output(response_audio, utterance_id);
     state_machine_->on_response_ready(response_audio);
@@ -278,6 +280,8 @@ void AgentPipeline::handle_blank_behavior() {
     }
     if (behavior == "say_again") {
         std::string phrase = utils::ensure_ends_with_over(config_->transcript_blank_behavior.say_again_phrase);
+        // Record the response text so it appears in the feed (use utterance_id 0 for blank behavior)
+        recorder_->record_llm_response(phrase, 0);
         AudioBuffer audio = tts_->synth_vox(phrase);
         state_machine_->on_response_ready(audio);
         vad_->reset();
@@ -382,6 +386,8 @@ void AgentPipeline::handle_speech_end(
             Logger::info("*** PLUGIN COMMAND EXECUTED ***");
             Logger::info("Response: " + action_result.response_text);
             std::string text = utils::ensure_ends_with_over(action_result.response_text);
+            // Record the response text so it appears in the feed
+            recorder_->record_llm_response(text, utterance_id);
             response_audio = tts_->synth_vox(text);
             AudioBuffer end_tone = tts_->get_end_tone_buffer();
             if (!end_tone.empty()) {
@@ -393,6 +399,25 @@ void AgentPipeline::handle_speech_end(
             tx_->transmit(response_audio);
             return;
         }
+    }
+
+    // For command-only personas (like municipal), don't route to LLM
+    // Only respond if a plugin command was recognized
+    if (current_persona_ == "municipal") {
+        Logger::info("Municipal persona: No command recognized");
+        std::string error_text = "Command not recognized. Please repeat. Over.";
+        // Record the response text so it appears in the feed
+        recorder_->record_llm_response(error_text, utterance_id);
+        response_audio = tts_->synth_vox(error_text);
+        AudioBuffer end_tone = tts_->get_end_tone_buffer();
+        if (!end_tone.empty()) {
+            response_audio.insert(response_audio.end(), end_tone.begin(), end_tone.end());
+        }
+        recorder_->record_tts_output(response_audio, utterance_id);
+        state_machine_->on_response_ready(response_audio);
+        vad_->reset();
+        tx_->transmit(response_audio);
+        return;
     }
 
     if (config_->wake_word.enabled) {
@@ -470,6 +495,8 @@ void AgentPipeline::execute_fast_path(const Plan& plan, AudioBuffer& response_au
                                        bool wait_for_channel_clear) {
     std::string text = utils::ensure_ends_with_over(plan.answer_text);
     LOG_ROUTER(std::string("Fast path - speaking: \"") + text + "\"");
+    // Record the response text so it appears in the feed
+    recorder_->record_llm_response(text, utterance_id);
     response_audio = tts_->synth_vox(text);
     recorder_->record_tts_output(response_audio, utterance_id);
     if (wait_for_channel_clear) {
@@ -510,7 +537,11 @@ void AgentPipeline::execute_llm_path(const Plan& plan, const Transcript& transcr
     // Use runtime persona state for system prompt
     if (current_persona_ == "translator") {
         // Translation mode: tight prompt for verbatim translation
-        // Note: Not using translation_model anymore - using Qwen for translation
+        // Use dedicated translation model if configured
+        if (!config_->llm.translation_model.empty()) {
+            model_override = config_->llm.translation_model;
+            LOG_LLM("Using translation model: " + model_override);
+        }
         system_prompt_override =
             "Translate this English radio transmission to " + target_language_ + " verbatim. "
             "Output ONLY the " + target_language_ + " translation. "
@@ -594,6 +625,8 @@ void AgentPipeline::execute_fallback(const Plan& plan, AudioBuffer& response_aud
     std::string text = utils::trim_copy(plan.fallback_text);
     if (text.empty()) text = "Stand by.";
     LOG_ROUTER(std::string("Fallback - speaking: \"") + text + "\"");
+    // Record the response text so it appears in the feed
+    recorder_->record_llm_response(text, utterance_id);
     response_audio = tts_->synth_vox(text);
     AudioBuffer end_tone = tts_->get_end_tone_buffer();
     if (!end_tone.empty()) {

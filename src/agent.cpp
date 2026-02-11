@@ -76,6 +76,11 @@ public:
         recorder_->start_session();
         Logger::info("Session recording started");
 
+        // Record session metadata
+        recorder_->set_session_metadata("persona", config_.llm.agent_persona);
+        recorder_->set_session_metadata("persona_name", config_.llm.persona_name);
+        recorder_->set_session_metadata("response_language", config_.llm.response_language);
+
         pipeline_ = std::make_unique<AgentPipeline>(
             &config_, audio_io_.get(), vad_.get(), stt_.get(), router_.get(),
             llm_.get(), tts_.get(), tx_.get(), state_machine_.get(), recorder_.get(),
