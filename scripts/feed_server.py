@@ -13,10 +13,56 @@ import shutil
 import subprocess
 import signal
 import time
+import threading
+import queue
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from urllib.parse import urlparse
 from pathlib import Path
 import argparse
+
+# ============================================================================
+# SSE Broadcaster
+# ============================================================================
+
+class SSEBroadcaster:
+    """Manages Server-Sent Events broadcasting to multiple clients."""
+
+    def __init__(self):
+        self.clients = []
+        self.lock = threading.Lock()
+
+    def add_client(self, client_queue):
+        """Add a new SSE client."""
+        with self.lock:
+            self.clients.append(client_queue)
+
+    def remove_client(self, client_queue):
+        """Remove an SSE client."""
+        with self.lock:
+            if client_queue in self.clients:
+                self.clients.remove(client_queue)
+
+    def broadcast(self, event_type, data):
+        """Broadcast an event to all connected clients."""
+        with self.lock:
+            dead_clients = []
+            for client_queue in self.clients:
+                try:
+                    client_queue.put_nowait((event_type, data))
+                except queue.Full:
+                    dead_clients.append(client_queue)
+
+            # Remove dead clients
+            for client in dead_clients:
+                self.clients.remove(client)
+
+    def get_client_count(self):
+        """Get number of connected clients."""
+        with self.lock:
+            return len(self.clients)
+
+# Global broadcaster instance
+sse_broadcaster = SSEBroadcaster()
 
 # ============================================================================
 # Styles
@@ -215,7 +261,6 @@ async function loadFeed() {
 
         feedContainer.innerHTML = data.exchanges.map(ex => {
             const date = new Date(ex.timestamp_ms);
-            // Check both persona fields and trim whitespace
             let personaName = 'Unknown';
             if (ex.persona_name && ex.persona_name.trim()) {
                 personaName = ex.persona_name.trim();
@@ -345,7 +390,7 @@ async function saveConfig() {
 function refreshFeed() { loadFeed(); }
 function startAutoRefresh() {
     if (autoRefreshInterval) clearInterval(autoRefreshInterval);
-    autoRefreshInterval = setInterval(loadFeed, 2000);  // Poll every 2 seconds for real-time updates
+    autoRefreshInterval = setInterval(loadFeed, 2000);
 }
 function stopAutoRefresh() {
     if (autoRefreshInterval) { clearInterval(autoRefreshInterval); autoRefreshInterval = null; }
@@ -445,6 +490,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
 class FeedHandler(BaseHTTPRequestHandler):
     """HTTP request handler for the feed server."""
 
+    protocol_version = 'HTTP/1.1'  # Required for SSE persistent connections
     sessions_dir = None
     config_path = None
     config_dir = None
@@ -474,6 +520,8 @@ class FeedHandler(BaseHTTPRequestHandler):
             self.update_config()
         elif path == '/api/agent/restart':
             self.agent_restart()
+        elif path == '/api/feed/notify':
+            self.handle_notify()
         else:
             self.send_error(404)
 
@@ -534,6 +582,77 @@ class FeedHandler(BaseHTTPRequestHandler):
         except Exception as e:
             self.json_response(500, {'error': str(e)})
 
+    def handle_notify(self):
+        """Handle POST /api/feed/notify - accept event notifications."""
+        try:
+            content_length = int(self.headers.get('Content-Length', 0))
+            if content_length == 0:
+                return self.json_response(400, {'error': 'Empty request'})
+
+            body = self.rfile.read(content_length)
+            event_data = json.loads(body.decode('utf-8'))
+
+            # Validate required fields
+            required = ['session_id', 'timestamp_ms', 'event_type', 'data']
+            for field in required:
+                if field not in event_data:
+                    return self.json_response(400, {'error': f'Missing required field: {field}'})
+
+            # Just return OK - agent writes to session logs, polling picks it up
+            self.json_response(200, {'status': 'ok'})
+
+        except json.JSONDecodeError as e:
+            self.json_response(400, {'error': f'Invalid JSON: {str(e)}'})
+        except Exception as e:
+            self.json_response(500, {'error': str(e)})
+
+    def serve_sse_stream(self):
+        """Serve SSE stream for real-time updates."""
+        # Set up SSE headers
+        self.send_response(200)
+        self.send_header('Content-Type', 'text/event-stream; charset=utf-8')
+        self.send_header('Cache-Control', 'no-cache, no-transform')
+        self.send_header('Connection', 'keep-alive')
+        self.send_header('X-Accel-Buffering', 'no')  # Disable nginx buffering
+        self.end_headers()
+
+        # Create queue for this client
+        client_queue = queue.Queue(maxsize=100)
+        sse_broadcaster.add_client(client_queue)
+
+        try:
+            # Send initial snapshot
+            try:
+                exchanges = self.get_exchanges()
+                snapshot_data = json.dumps({'exchanges': exchanges})
+                self.wfile.write(f"event: snapshot\ndata: {snapshot_data}\n\n".encode('utf-8'))
+                self.wfile.flush()
+            except Exception as e:
+                print(f"SSE snapshot error: {e}", file=sys.stderr)
+                # Send empty snapshot on error
+                self.wfile.write(f"event: snapshot\ndata: {{'exchanges': []}}\n\n".encode('utf-8'))
+                self.wfile.flush()
+
+            # Stream events from queue
+            while True:
+                try:
+                    # Wait for events with timeout for heartbeat
+                    event_type, data = client_queue.get(timeout=30)
+                    event_json = json.dumps(data)
+                    self.wfile.write(f"event: {event_type}\ndata: {event_json}\n\n".encode('utf-8'))
+                    self.wfile.flush()
+                except queue.Empty:
+                    # Send heartbeat to keep connection alive
+                    self.wfile.write(": heartbeat\n\n".encode('utf-8'))
+                    self.wfile.flush()
+                except (BrokenPipeError, ConnectionResetError):
+                    break
+
+        except Exception as e:
+            print(f"SSE client error: {e}", file=sys.stderr)
+        finally:
+            sse_broadcaster.remove_client(client_queue)
+
     def update_config(self):
         """Update configuration file."""
         if not self.config_path or not Path(self.config_path).exists():
@@ -588,7 +707,10 @@ class FeedHandler(BaseHTTPRequestHandler):
         if not sessions_path.exists():
             return exchanges
 
-        for session_dir in sorted(sessions_path.iterdir(), key=lambda d: d.name, reverse=True):
+        # Only read the 30 most recent sessions for performance
+        recent_sessions = sorted(sessions_path.iterdir(), key=lambda d: d.name, reverse=True)[:30]
+
+        for session_dir in recent_sessions:
             if not session_dir.is_dir():
                 continue
 

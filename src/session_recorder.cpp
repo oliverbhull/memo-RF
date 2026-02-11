@@ -230,6 +230,18 @@ private:
 
         file << "{\n";
         file << "  \"session_id\": \"" << session_id_ << "\",\n";
+
+        // Write metadata
+        file << "  \"metadata\": {\n";
+        size_t meta_idx = 0;
+        for (const auto& [key, value] : metadata_) {
+            file << "    \"" << key << "\": \"" << escape_json(value) << "\"";
+            if (meta_idx < metadata_.size() - 1) file << ",";
+            file << "\n";
+            meta_idx++;
+        }
+        file << "  },\n";
+
         file << "  \"events\": [\n";
 
         for (size_t i = 0; i < events_.size(); i++) {

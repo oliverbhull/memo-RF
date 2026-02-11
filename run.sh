@@ -29,8 +29,8 @@ if [ $KILLED -eq 0 ]; then
 fi
 sleep 0.5
 
-# Feed server configuration
-FEED_SERVER_ENABLED=${MEMO_RF_NO_FEED_SERVER:-0}
+# Feed server configuration - DISABLED BY DEFAULT
+FEED_SERVER_ENABLED=${MEMO_RF_FEED_SERVER:-0}
 FEED_PORT=${MEMO_RF_FEED_PORT:-5050}
 FEED_PID=""
 
@@ -47,7 +47,7 @@ cleanup() {
 trap cleanup EXIT INT TERM
 
 # Start feed server if enabled
-if [ "$FEED_SERVER_ENABLED" != "1" ]; then
+if [ "$FEED_SERVER_ENABLED" = "1" ]; then
     if [ -f "scripts/feed_server.py" ]; then
         echo "Starting feed server on port $FEED_PORT..."
         python3 scripts/feed_server.py --port "$FEED_PORT" --enable-agent-management > /dev/null 2>&1 &
@@ -75,7 +75,7 @@ if [ "$FEED_SERVER_ENABLED" != "1" ]; then
         echo "Warning: scripts/feed_server.py not found, skipping feed server"
     fi
 else
-    echo "Feed server disabled (MEMO_RF_NO_FEED_SERVER=1)"
+    echo "Feed server disabled (set MEMO_RF_FEED_SERVER=1 to enable)"
 fi
 
 echo "Starting memo-rf..."
