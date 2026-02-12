@@ -265,9 +265,10 @@ HTML = """<!DOCTYPE html>
         <div class="control-group">
             <label class="control-label">Language</label>
             <select id="language-select">
+                <option value="">Default</option>
                 <option value="en">English</option>
-                <option value="fr">Fran&ccedil;ais</option>
                 <option value="es">Espa&ntilde;ol</option>
+                <option value="fr">Fran&ccedil;ais</option>
                 <option value="de">Deutsch</option>
             </select>
         </div>
@@ -287,8 +288,10 @@ HTML = """<!DOCTYPE html>
             try {
                 const configResp = await fetch('/api/config');
                 const config = await configResp.json();
-                currentLanguage = config.language || config.response_language || 'en';
-                document.getElementById('language-select').value = currentLanguage;
+                currentLanguage = config.language || config.response_language || '';
+                const langSelect = document.getElementById('language-select');
+                const langValues = Array.from(langSelect.options).map(o => o.value);
+                langSelect.value = langValues.includes(currentLanguage) ? currentLanguage : '';
 
                 if (config.active !== undefined) {
                     identityMode = true;
@@ -336,8 +339,11 @@ HTML = """<!DOCTYPE html>
                     `).join('');
                     document.getElementById('agent-grid').innerHTML = '';
                     const personaSelect = document.getElementById('persona-select');
-                    personaSelect.innerHTML = allPersonas.map(p => `<option value="${escapeHtml(p.id)}">${escapeHtml(p.name)}</option>`).join('');
-                    personaSelect.value = currentPersona;
+                    const personaOptions = allPersonas.map(p => `<option value="${escapeHtml(p.id)}">${escapeHtml(p.name)}</option>`).join('');
+                    personaSelect.innerHTML = personaOptions || '<option value="">— No personas —</option>';
+                    const hasCurrent = allPersonas.some(p => p.id === currentPersona);
+                    personaSelect.value = hasCurrent ? currentPersona : (allPersonas[0] ? allPersonas[0].id : '');
+                    if (!hasCurrent && currentPersona) currentPersona = personaSelect.value;
                     highlightActiveRobot();
                 }
 
