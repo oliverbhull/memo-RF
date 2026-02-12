@@ -86,6 +86,17 @@ On Ubuntu or Jetson (aarch64):
 
 See `docs/JETSON_SETUP.md` for a concise Jetson setup and transfer steps.
 
+### Config load order (when using identity layout)
+
+When you run with the config **directory** (e.g. `./run.sh` or `./memo-rf config`), config is built in this order:
+
+1. **defaults.json** – base settings (audio, VAD, STT, LLM, TTS, etc.).
+2. **config.json** – if present, applied as **machine overrides** (e.g. Jetson `input_sample_rate: 48000`, device IDs, `piper_path`, `voice_path`). Keeps per-machine audio and paths working.
+3. **active.json** – which identity is active (e.g. `robots/bloo`).
+4. **&lt;active&gt;.json** (e.g. `robots/bloo.json`) – identity persona, behavior, and any overrides.
+
+So you can keep a single **config.json** on each machine with device and path overrides; the active robot/agent is still chosen by the UI and **active.json**.
+
 ### Syncing from GitHub (e.g. Jetson after push from main)
 
 To keep the Jetson (or any second device) in sync with `main`:

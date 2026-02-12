@@ -424,6 +424,20 @@ Config Config::load_from_file(const std::string& path) {
             }
         }
 
+        // Machine-specific overrides: if config.json exists, apply it so audio devices,
+        // input_sample_rate, piper_path, etc. from the existing config are used.
+        std::string machine_config_path = config_dir + "config.json";
+        std::ifstream mcf(machine_config_path);
+        if (mcf.is_open()) {
+            try {
+                json machine_j;
+                mcf >> machine_j;
+                apply_json_to_config(cfg, machine_j);
+            } catch (const json::exception& e) {
+                Logger::warn("Error parsing config.json (machine overrides): " + std::string(e.what()));
+            }
+        }
+
         std::string identity_path = config_dir + active + ".json";
         std::ifstream idf(identity_path);
         if (!idf.is_open()) {
