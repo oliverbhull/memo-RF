@@ -286,22 +286,30 @@ HTML = """<!DOCTYPE html>
 
         async function loadConfig() {
             try {
-                const configResp = await fetch('/api/config');
+                const [configResp, robotsResp, agentsResp] = await Promise.all([
+                    fetch('/api/config'),
+                    fetch('/api/robots').catch(() => ({ json: () => ({ robots: [] }) })),
+                    fetch('/api/agents').catch(() => ({ json: () => ({ agents: [] }) }))
+                ]);
                 const config = await configResp.json();
+                const robotsData = await robotsResp.json();
+                const agentsData = await agentsResp.json();
+                const robots = robotsData.robots || [];
+                const agents = agentsData.agents || [];
+
                 currentLanguage = config.language || config.response_language || '';
                 const langSelect = document.getElementById('language-select');
                 const langValues = Array.from(langSelect.options).map(o => o.value);
                 langSelect.value = langValues.includes(currentLanguage) ? currentLanguage : '';
 
-                if (config.active !== undefined) {
+                const hasRobotsOrAgents = robots.length > 0 || agents.length > 0;
+                if (hasRobotsOrAgents) {
                     identityMode = true;
-                    currentActive = config.active;
-                    const robotsResp = await fetch('/api/robots');
-                    const robotsData = await robotsResp.json();
-                    const agentsResp = await fetch('/api/agents');
-                    const agentsData = await agentsResp.json();
-                    const robots = robotsData.robots || [];
-                    const agents = agentsData.agents || [];
+                    document.getElementById('persona-control').style.display = 'none';
+                    currentActive = (config.active && [].concat(
+                        robots.map(r => 'robots/' + r.id),
+                        agents.map(a => 'agents/' + a.id)
+                    ).includes(config.active)) ? config.active : (robots[0] ? 'robots/' + robots[0].id : agents[0] ? 'agents/' + agents[0].id : '');
                     const robotGrid = document.getElementById('robot-grid');
                     robotGrid.innerHTML = robots.map(r => {
                         const activeVal = 'robots/' + r.id;
@@ -320,7 +328,6 @@ HTML = """<!DOCTYPE html>
                             <div class="robot-desc">${escapeHtml(a.description || '')}</div>
                         </div>`;
                     }).join('');
-                    document.getElementById('persona-control').style.display = 'none';
                     highlightActiveIdentity();
                 } else {
                     identityMode = false;
