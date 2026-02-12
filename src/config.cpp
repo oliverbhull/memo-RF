@@ -5,8 +5,10 @@
 #include <sstream>
 #include <unordered_map>
 #include <nlohmann/json.hpp>
+#include <filesystem>
 
 using json = nlohmann::json;
+namespace fs = std::filesystem;
 
 namespace {
 
@@ -100,27 +102,77 @@ void apply_response_language(memo_rf::Config& cfg, const std::string& config_pat
     cfg.tts.voice_path = base + rel;
 }
 
-} // namespace
-
-namespace memo_rf {
-
-Config Config::load_from_file(const std::string& path) {
-    Config cfg;
-    
-    std::ifstream file(path);
-    if (!file.is_open()) {
-        Logger::warn("Could not open config file: " + path + ". Using defaults.");
-        return cfg;
+/// Apply identity-file overlay (persona, identity, llm, voice, behavior, plugins) onto an already-loaded config.
+void merge_identity_into_config(memo_rf::Config& cfg, const json& j) {
+    if (j.contains("persona") && j["persona"].is_object()) {
+        const auto& p = j["persona"];
+        if (p.contains("system_prompt") && p["system_prompt"].is_string())
+            cfg.llm.system_prompt = p["system_prompt"].get<std::string>();
+        if (p.contains("name") && p["name"].is_string())
+            cfg.llm.persona_name = p["name"].get<std::string>();
     }
-    
-    json j;
-    try {
-        file >> j;
-    } catch (const json::exception& e) {
-        Logger::error("Error parsing config JSON: " + std::string(e.what()));
-        return cfg;
+    if (j.contains("identity") && j["identity"].is_object()) {
+        const auto& i = j["identity"];
+        if (i.contains("id") && i["id"].is_string())
+            cfg.llm.agent_persona = i["id"].get<std::string>();
+        if (i.contains("name") && i["name"].is_string())
+            cfg.llm.persona_name = i["name"].get<std::string>();
     }
-    
+    if (j.contains("llm") && j["llm"].is_object()) {
+        const auto& l = j["llm"];
+        if (l.contains("endpoint") && l["endpoint"].is_string()) cfg.llm.endpoint = l["endpoint"];
+        if (l.contains("timeout_ms") && l["timeout_ms"].is_number_integer()) cfg.llm.timeout_ms = l["timeout_ms"];
+        if (l.contains("max_tokens") && l["max_tokens"].is_number_integer()) cfg.llm.max_tokens = l["max_tokens"];
+        if (l.contains("context_max_turns_to_send") && l["context_max_turns_to_send"].is_number_integer()) cfg.llm.context_max_turns_to_send = l["context_max_turns_to_send"];
+        if (l.contains("keep_alive_sec") && l["keep_alive_sec"].is_number_integer()) cfg.llm.keep_alive_sec = l["keep_alive_sec"];
+        if (l.contains("model_name") && l["model_name"].is_string()) cfg.llm.model_name = l["model_name"];
+        if (l.contains("translation_model") && l["translation_model"].is_string())
+            cfg.llm.translation_model = l["translation_model"].get<std::string>();
+        if (l.contains("warmup_translation_model")) cfg.llm.warmup_translation_model = l["warmup_translation_model"];
+        if (l.contains("temperature") && l["temperature"].is_number()) cfg.llm.temperature = l["temperature"];
+        if (l.contains("system_prompt") && l["system_prompt"].is_string()) cfg.llm.system_prompt = l["system_prompt"];
+        if (l.contains("response_language") && l["response_language"].is_string())
+            cfg.llm.response_language = l["response_language"].get<std::string>();
+        if (l.contains("stop_sequences") && l["stop_sequences"].is_array()) {
+            cfg.llm.stop_sequences.clear();
+            for (const auto& seq : l["stop_sequences"])
+                if (seq.is_string()) cfg.llm.stop_sequences.push_back(seq.get<std::string>());
+        }
+        if (l.contains("truncation") && l["truncation"].is_object() && l["truncation"].contains("fallback_phrase") && l["truncation"]["fallback_phrase"].is_string())
+            cfg.llm.truncation.fallback_phrase = l["truncation"]["fallback_phrase"];
+    }
+    if (j.contains("voice") && j["voice"].is_object()) {
+        const auto& v = j["voice"];
+        if (v.contains("voice_path") && v["voice_path"].is_string()) cfg.tts.voice_path = v["voice_path"];
+        if (v.contains("voice_models_dir") && v["voice_models_dir"].is_string()) cfg.tts.voice_models_dir = v["voice_models_dir"];
+        if (v.contains("vox_preroll_ms") && v["vox_preroll_ms"].is_number_integer()) cfg.tts.vox_preroll_ms = v["vox_preroll_ms"];
+        if (v.contains("output_gain") && v["output_gain"].is_number()) cfg.tts.output_gain = v["output_gain"];
+        if (v.contains("language") && v["language"].is_string())
+            cfg.llm.response_language = v["language"].get<std::string>();
+    }
+    if (j.contains("behavior") && j["behavior"].is_object()) {
+        const auto& b = j["behavior"];
+        if (b.contains("mode") && b["mode"].is_string())
+            cfg.behavior.mode = b["mode"].get<std::string>();
+        if (b.contains("router_enabled")) cfg.behavior.router_enabled = b["router_enabled"];
+        if (b.contains("wake_word_enabled")) cfg.wake_word.enabled = b["wake_word_enabled"];
+    }
+    if (j.contains("plugins") && j["plugins"].is_object()) {
+        const auto& p = j["plugins"];
+        if (p.contains("config_files") && p["config_files"].is_array()) {
+            cfg.plugins.config_files.clear();
+            for (const auto& path_val : p["config_files"])
+                if (path_val.is_string()) cfg.plugins.config_files.push_back(path_val.get<std::string>());
+        }
+    } else if (j.contains("plugin_paths") && j["plugin_paths"].is_array()) {
+        cfg.plugins.config_files.clear();
+        for (const auto& path_val : j["plugin_paths"])
+            if (path_val.is_string()) cfg.plugins.config_files.push_back(path_val.get<std::string>());
+    }
+}
+
+/// Apply full JSON config (all sections) into cfg. Used for defaults and legacy single-file load.
+void apply_json_to_config(memo_rf::Config& cfg, const json& j) {
     // Audio config
     if (j.contains("audio")) {
         auto& a = j["audio"];
@@ -245,6 +297,13 @@ Config Config::load_from_file(const std::string& path) {
         auto& w = j["wake_word"];
         if (w.contains("enabled")) cfg.wake_word.enabled = w["enabled"];
     }
+
+    // Behavior config (robot/agent mode)
+    if (j.contains("behavior") && j["behavior"].is_object()) {
+        auto& b = j["behavior"];
+        if (b.contains("mode") && b["mode"].is_string()) cfg.behavior.mode = b["mode"];
+        if (b.contains("router_enabled")) cfg.behavior.router_enabled = b["router_enabled"];
+    }
     
     // Tools config
     if (j.contains("tools")) {
@@ -287,26 +346,127 @@ Config Config::load_from_file(const std::string& path) {
     if (j.contains("enable_replay_mode")) cfg.enable_replay_mode = j["enable_replay_mode"];
     if (j.contains("replay_wav_path")) cfg.replay_wav_path = j["replay_wav_path"];
     if (j.contains("feed_server_url")) cfg.feed_server_url = j["feed_server_url"];
+}
 
-    // Build-time persona override (from -DAGENT_PERSONA=xxx)
+} // anonymous namespace
+
+namespace memo_rf {
+
+Config Config::load_from_file(const std::string& path) {
+    Config cfg;
+
+    std::string config_dir;
+    std::string path_normalized = path;
+    while (!path_normalized.empty() && (path_normalized.back() == '/' || path_normalized.back() == '\\'))
+        path_normalized.pop_back();
+
+    const bool is_dir = [&]() {
+        std::error_code ec;
+        return fs::is_directory(path_normalized, ec) && !ec;
+    }();
+
+    if (is_dir) {
+        config_dir = path_normalized;
+        if (!config_dir.empty() && config_dir.back() != '/' && config_dir.back() != '\\')
+            config_dir += "/";
+
+        std::string active_path = config_dir + "active.json";
+        std::ifstream af(active_path);
+        if (!af.is_open()) {
+            std::string legacy_path = config_dir + "config.json";
+            std::ifstream lf(legacy_path);
+            if (lf.is_open()) {
+                Logger::info("No active.json; loading legacy " + legacy_path);
+                return load_from_file(legacy_path);
+            }
+            Logger::warn("Config directory given but could not open " + active_path + " or " + legacy_path + ". Using defaults.");
+            return cfg;
+        }
+        json active_j;
+        try { af >> active_j; } catch (const json::exception& e) {
+            Logger::error("Error parsing active.json: " + std::string(e.what()));
+            return cfg;
+        }
+        std::string active;
+        if (active_j.contains("active") && active_j["active"].is_string())
+            active = active_j["active"].get<std::string>();
+        if (active.empty()) {
+            Logger::warn("active.json missing or empty \"active\" field.");
+            return cfg;
+        }
+
+        std::string defaults_path = config_dir + "defaults.json";
+        std::ifstream df(defaults_path);
+        if (!df.is_open()) {
+            Logger::warn("Could not open " + defaults_path + ". Using defaults.");
+        } else {
+            try {
+                json defaults_j;
+                df >> defaults_j;
+                apply_json_to_config(cfg, defaults_j);
+            } catch (const json::exception& e) {
+                Logger::warn("Error parsing defaults.json: " + std::string(e.what()));
+            }
+        }
+
+        std::string identity_path = config_dir + active + ".json";
+        std::ifstream idf(identity_path);
+        if (!idf.is_open()) {
+            Logger::warn("Could not open identity file " + identity_path + ". Using defaults only.");
+        } else {
+            try {
+                json identity_j;
+                idf >> identity_j;
+                merge_identity_into_config(cfg, identity_j);
+            } catch (const json::exception& e) {
+                Logger::error("Error parsing identity file: " + std::string(e.what()));
+                return cfg;
+            }
+        }
+
+#ifdef AGENT_PERSONA_OVERRIDE
+        cfg.llm.agent_persona = AGENT_PERSONA_OVERRIDE;
+        Logger::info("Using build-time persona override: " + std::string(AGENT_PERSONA_OVERRIDE));
+#endif
+
+        apply_response_language(cfg, config_dir + "defaults.json");
+        cfg.config_dir_ = path_normalized;
+
+        if (!cfg.stt.model_path.empty()) cfg.stt.model_path = expand_path(cfg.stt.model_path);
+        if (!cfg.tts.voice_path.empty()) cfg.tts.voice_path = expand_path(cfg.tts.voice_path);
+        if (!cfg.tts.piper_path.empty()) cfg.tts.piper_path = expand_path(cfg.tts.piper_path);
+        if (cfg.tts.espeak_data_path.empty())
+            cfg.tts.espeak_data_path = default_espeak_data_path();
+        else
+            cfg.tts.espeak_data_path = expand_path(cfg.tts.espeak_data_path);
+
+        Logger::info("Loaded identity: " + (cfg.llm.persona_name.empty() ? cfg.llm.agent_persona : cfg.llm.persona_name) + " (" + active + ")");
+        return cfg;
+    }
+
+    std::ifstream file(path);
+    if (!file.is_open()) {
+        Logger::warn("Could not open config file: " + path + ". Using defaults.");
+        return cfg;
+    }
+    json j;
+    try { file >> j; } catch (const json::exception& e) {
+        Logger::error("Error parsing config JSON: " + std::string(e.what()));
+        return cfg;
+    }
+    apply_json_to_config(cfg, j);
+
 #ifdef AGENT_PERSONA_OVERRIDE
     cfg.llm.agent_persona = AGENT_PERSONA_OVERRIDE;
     Logger::info("Using build-time persona override: " + std::string(AGENT_PERSONA_OVERRIDE));
 #endif
 
-    // Resolve agent persona from library (persona wins over inline system_prompt)
     resolve_persona(cfg, path);
-
-    // Apply response_language: append language to system_prompt, set voice_path from language_voices.json
     apply_response_language(cfg, path);
 
-    // Path expansion: ~ to $HOME for model and binary paths
-    if (!cfg.stt.model_path.empty())
-        cfg.stt.model_path = expand_path(cfg.stt.model_path);
-    if (!cfg.tts.voice_path.empty())
-        cfg.tts.voice_path = expand_path(cfg.tts.voice_path);
-    if (!cfg.tts.piper_path.empty())
-        cfg.tts.piper_path = expand_path(cfg.tts.piper_path);
+    if (!cfg.stt.model_path.empty()) cfg.stt.model_path = expand_path(cfg.stt.model_path);
+    if (!cfg.tts.voice_path.empty()) cfg.tts.voice_path = expand_path(cfg.tts.voice_path);
+    if (!cfg.tts.piper_path.empty()) cfg.tts.piper_path = expand_path(cfg.tts.piper_path);
     if (cfg.tts.espeak_data_path.empty())
         cfg.tts.espeak_data_path = default_espeak_data_path();
     else

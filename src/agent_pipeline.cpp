@@ -22,8 +22,10 @@
 #include <algorithm>
 #include <cctype>
 #include <nlohmann/json.hpp>
+#include <filesystem>
 
 using json = nlohmann::json;
+namespace fs = std::filesystem;
 
 namespace memo_rf {
 
@@ -236,7 +238,63 @@ bool AgentPipeline::check_and_handle_persona_change(const std::string& transcrip
         return true;
     }
 
-    // Load the persona
+    // Identity config: try robots/ and agents/ and write active.json
+    if (!config_->config_dir_.empty()) {
+        std::string config_dir = config_->config_dir_;
+        if (config_dir.back() != '/' && config_dir.back() != '\\')
+            config_dir += "/";
+        for (const char* sub : {"robots", "agents"}) {
+            std::string dir_path = config_dir + sub;
+            std::error_code ec;
+            if (!fs::is_directory(dir_path, ec)) continue;
+            for (const auto& entry : fs::directory_iterator(dir_path, ec)) {
+                if (ec) break;
+                if (entry.path().extension() != ".json") continue;
+                std::ifstream f(entry.path().string());
+                if (!f.is_open()) continue;
+                json j;
+                try { f >> j; } catch (...) { continue; }
+                std::string id;
+                std::string name;
+                if (j.contains("identity") && j["identity"].is_object()) {
+                    const auto& i = j["identity"];
+                    if (i.contains("id") && i["id"].is_string()) id = i["id"].get<std::string>();
+                    if (i.contains("name") && i["name"].is_string()) name = i["name"].get<std::string>();
+                }
+                if (id.empty()) id = entry.path().stem().string();
+                if (id != persona_id) continue;
+                std::string active_value = std::string(sub) + "/" + entry.path().stem().string();
+                std::string active_path = config_dir + "active.json";
+                json active_j;
+                active_j["active"] = active_value;
+                std::ofstream of(active_path);
+                if (!of.is_open()) {
+                    Logger::warn("Could not write " + active_path);
+                    break;
+                }
+                of << active_j.dump(2);
+                Logger::info("Wrote active.json: " + active_value);
+                std::string display = name.empty() ? persona_id : name;
+                std::string ack_text = "Switched to " + display + ". Restart to apply. Over.";
+                recorder_->record_llm_response(ack_text, utterance_id);
+                response_audio = tts_->synth_vox(ack_text);
+                recorder_->record_tts_output(response_audio, utterance_id);
+                state_machine_->on_response_ready(response_audio);
+                vad_->reset();
+                tx_->transmit(response_audio);
+                return true;
+            }
+        }
+        Logger::warn("Identity not found: " + persona_id);
+        std::string error_text = "Identity not found: " + persona_id + ". Restart to apply. Over.";
+        response_audio = tts_->synth_vox(error_text);
+        state_machine_->on_response_ready(response_audio);
+        vad_->reset();
+        tx_->transmit(response_audio);
+        return true;
+    }
+
+    // Legacy: load from personas.json and update runtime state
     std::string new_system_prompt;
     std::string new_persona_name;
     if (!load_persona(persona_id, new_system_prompt, new_persona_name)) {
@@ -249,16 +307,13 @@ bool AgentPipeline::check_and_handle_persona_change(const std::string& transcrip
         return true;
     }
 
-    // Update runtime state
     current_persona_ = persona_id;
     current_system_prompt_ = new_system_prompt;
     current_persona_name_ = new_persona_name;
 
     Logger::info("Persona changed to: " + current_persona_name_ + " (" + persona_id + ")");
 
-    // Acknowledge the change
     std::string ack_text = "Switched to " + current_persona_name_ + " persona. Over.";
-    // Record the response text so it appears in the feed
     recorder_->record_llm_response(ack_text, utterance_id);
     response_audio = tts_->synth_vox(ack_text);
     recorder_->record_tts_output(response_audio, utterance_id);
@@ -401,10 +456,9 @@ void AgentPipeline::handle_speech_end(
         }
     }
 
-    // For command-only personas (like municipal), don't route to LLM
-    // Only respond if a plugin command was recognized
-    if (current_persona_ == "municipal") {
-        Logger::info("Municipal persona: No command recognized");
+    // For plugin_only mode, don't route to LLM; only plugin commands are valid
+    if (config_->behavior.mode == "plugin_only") {
+        Logger::info("Plugin-only mode: No command recognized");
         std::string error_text = "Command not recognized. Please repeat. Over.";
         // Record the response text so it appears in the feed
         recorder_->record_llm_response(error_text, utterance_id);
@@ -417,6 +471,17 @@ void AgentPipeline::handle_speech_end(
         state_machine_->on_response_ready(response_audio);
         vad_->reset();
         tx_->transmit(response_audio);
+        return;
+    }
+
+    // llm_only mode: skip router, go straight to LLM (e.g. translator)
+    if (config_->behavior.mode == "llm_only") {
+        state_machine_->on_transcript_ready(current_transcript);
+        Plan llm_plan;
+        llm_plan.type = PlanType::SpeakAckThenAnswer;
+        llm_plan.ack_text = "";
+        llm_plan.needs_llm = true;
+        execute_plan(llm_plan, current_transcript, response_audio, utterance_id, config_->wake_word.enabled, pending_response_audio);
         return;
     }
 
@@ -535,9 +600,8 @@ void AgentPipeline::execute_llm_path(const Plan& plan, const Transcript& transcr
     std::string system_prompt_override;
 
     // Use runtime persona state for system prompt
-    if (current_persona_ == "translator") {
-        // Translation mode: tight prompt for verbatim translation
-        // Use dedicated translation model if configured
+    if (config_->behavior.mode == "llm_only") {
+        // LLM-only mode (e.g. translator): tight prompt for verbatim translation when translation_model set
         if (!config_->llm.translation_model.empty()) {
             model_override = config_->llm.translation_model;
             LOG_LLM("Using translation model: " + model_override);
@@ -548,7 +612,7 @@ void AgentPipeline::execute_llm_path(const Plan& plan, const Transcript& transcr
             "Do not add explanations, preamble, or commentary. "
             "Preserve the exact meaning and radio terminology. "
             "End with \"over\".";
-        LOG_LLM("Translation mode - target language: " + target_language_);
+        LOG_LLM("LLM-only mode - target language: " + target_language_);
     } else {
         // Use current runtime system prompt (may have been changed dynamically)
         system_prompt_override = current_system_prompt_;

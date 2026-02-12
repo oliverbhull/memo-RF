@@ -14,8 +14,12 @@ events = []
 MAX_EVENTS = 100
 
 # Config paths
-CONFIG_PATH = Path(__file__).parent.parent / 'config' / 'config.json'
-PERSONAS_PATH = Path(__file__).parent.parent / 'config' / 'personas.json'
+CONFIG_DIR = Path(__file__).parent.parent / 'config'
+CONFIG_PATH = CONFIG_DIR / 'config.json'
+PERSONAS_PATH = CONFIG_DIR / 'personas.json'
+ACTIVE_PATH = CONFIG_DIR / 'active.json'
+ROBOTS_DIR = CONFIG_DIR / 'robots'
+AGENTS_DIR = CONFIG_DIR / 'agents'
 
 # Simple HTML UI
 HTML = """<!DOCTYPE html>
@@ -33,56 +37,28 @@ HTML = """<!DOCTYPE html>
             padding: 20px;
         }
         .header {
-            margin-bottom: 30px;
-            padding-bottom: 20px;
+            margin-bottom: 20px;
+            padding-bottom: 15px;
             border-bottom: 2px solid #ff7700;
-        }
-        .header-top {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            margin-bottom: 15px;
-            gap: 20px;
-        }
-        .control-group {
-            display: flex;
-            flex-direction: column;
-            gap: 5px;
-            width: 200px;
-        }
-        .control-group:last-child {
-            align-items: flex-end;
-        }
-        .control-label {
-            color: #888;
-            font-size: 0.75em;
-            text-transform: uppercase;
-        }
-        select {
-            background: #1a1a1a;
-            color: #ff7700;
-            border: 1px solid #333;
-            padding: 8px 12px;
-            border-radius: 4px;
-            font-family: 'Courier New', monospace;
-            cursor: pointer;
-            font-size: 0.9em;
-        }
-        select:hover {
-            border-color: #ff7700;
         }
         h1 {
             color: #ff7700;
             font-size: 2.5em;
             text-shadow: 0 0 10px rgba(255, 119, 0, 0.5);
             margin: 0;
-            flex: 1;
             text-align: center;
+        }
+        .subtitle {
+            text-align: center;
+            color: #666;
+            font-size: 0.8em;
+            margin-top: 4px;
         }
         .status {
             text-align: center;
             color: #888;
             font-size: 0.9em;
+            margin-top: 8px;
         }
         .status.active { color: #00ff00; }
         .update-message {
@@ -96,6 +72,106 @@ HTML = """<!DOCTYPE html>
             margin-top: 10px;
             display: none;
         }
+
+        /* --- Robot Selector Grid --- */
+        .robots-section {
+            margin-bottom: 24px;
+        }
+        .section-label {
+            color: #888;
+            font-size: 0.75em;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            margin-bottom: 10px;
+        }
+        .robot-grid {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 10px;
+        }
+        @media (max-width: 700px) {
+            .robot-grid { grid-template-columns: repeat(2, 1fr); }
+        }
+        .robot-card {
+            background: #1a1a1a;
+            border: 2px solid #2a2a2a;
+            border-radius: 8px;
+            padding: 14px;
+            cursor: pointer;
+            transition: all 0.15s;
+            position: relative;
+        }
+        .robot-card:hover {
+            border-color: #ff7700;
+            background: #1f1a14;
+            box-shadow: 0 0 20px rgba(255, 119, 0, 0.1);
+        }
+        .robot-card.active {
+            border-color: #ff7700;
+            background: #1f1a14;
+            box-shadow: 0 0 20px rgba(255, 119, 0, 0.15);
+        }
+        .robot-card.active::after {
+            content: 'ACTIVE';
+            position: absolute;
+            top: 8px;
+            right: 8px;
+            background: #ff7700;
+            color: #000;
+            font-size: 0.6em;
+            font-weight: bold;
+            padding: 2px 6px;
+            border-radius: 3px;
+            letter-spacing: 0.5px;
+        }
+        .robot-name {
+            color: #ff7700;
+            font-weight: bold;
+            font-size: 1em;
+            margin-bottom: 2px;
+        }
+        .robot-tagline {
+            color: #888;
+            font-size: 0.75em;
+        }
+        .robot-desc {
+            color: #555;
+            font-size: 0.7em;
+            margin-top: 6px;
+            line-height: 1.4;
+        }
+
+        /* --- Controls row --- */
+        .controls-row {
+            display: flex;
+            gap: 12px;
+            align-items: flex-end;
+            margin-bottom: 24px;
+        }
+        .control-group {
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+        }
+        .control-label {
+            color: #888;
+            font-size: 0.7em;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+        select {
+            background: #1a1a1a;
+            color: #ff7700;
+            border: 1px solid #333;
+            padding: 8px 12px;
+            border-radius: 4px;
+            font-family: 'Courier New', monospace;
+            cursor: pointer;
+            font-size: 0.85em;
+        }
+        select:hover { border-color: #ff7700; }
+
+        /* --- Feed --- */
         .exchange {
             background: #1a1a1a;
             border: 1px solid #333;
@@ -160,65 +236,148 @@ HTML = """<!DOCTYPE html>
 </head>
 <body>
     <div class="header">
-        <div class="header-top">
-            <div class="control-group">
-                <label class="control-label">Persona</label>
-                <select id="persona-select">
-                    <option>Loading...</option>
-                </select>
-            </div>
-            <h1>MEMO</h1>
-            <div class="control-group">
-                <label class="control-label">Language</label>
-                <select id="language-select">
-                    <option value="en">English</option>
-                    <option value="fr">Français</option>
-                    <option value="es">Español</option>
-                    <option value="de">Deutsch</option>
-                </select>
-            </div>
-        </div>
+        <h1>MEMO</h1>
+        <div class="subtitle">Founders, Inc. | Artifact 2026 Demo Day</div>
         <div class="status" id="status">Connecting...</div>
         <div class="update-message" id="update-msg"></div>
     </div>
+
+    <div class="robots-section">
+        <div class="section-label">Robots</div>
+        <div class="robot-grid" id="robot-grid">
+            <!-- Populated by JS -->
+        </div>
+    </div>
+    <div class="robots-section">
+        <div class="section-label">Agents</div>
+        <div class="robot-grid" id="agent-grid">
+            <!-- Populated by JS -->
+        </div>
+    </div>
+
+    <div class="controls-row" id="controls-row">
+        <div class="control-group" id="persona-control">
+            <label class="control-label">All Personas</label>
+            <select id="persona-select">
+                <option>Loading...</option>
+            </select>
+        </div>
+        <div class="control-group">
+            <label class="control-label">Language</label>
+            <select id="language-select">
+                <option value="en">English</option>
+                <option value="fr">Fran&ccedil;ais</option>
+                <option value="es">Espa&ntilde;ol</option>
+                <option value="de">Deutsch</option>
+            </select>
+        </div>
+    </div>
+
+    <div class="section-label">Feed</div>
     <div id="feed"></div>
+
     <script>
-        let lastUpdate = 0;
+        let currentActive = '';
         let currentPersona = '';
         let currentLanguage = '';
+        let allPersonas = [];
+        let identityMode = false;
 
         async function loadConfig() {
             try {
-                // Load personas
-                const personasResp = await fetch('/api/personas');
-                const personasData = await personasResp.json();
-                const personaSelect = document.getElementById('persona-select');
-                personaSelect.innerHTML = personasData.personas
-                    .map(p => `<option value="${p.id}">${p.name}</option>`)
-                    .join('');
-
-                // Load current config
                 const configResp = await fetch('/api/config');
                 const config = await configResp.json();
-
-                currentPersona = config.persona;
-                currentLanguage = config.language;
-
-                personaSelect.value = currentPersona;
+                currentLanguage = config.language || config.response_language || 'en';
                 document.getElementById('language-select').value = currentLanguage;
 
-                // Add change listeners
-                personaSelect.addEventListener('change', async (e) => {
-                    await updateConfig({ persona: e.target.value });
-                });
+                if (config.active !== undefined) {
+                    identityMode = true;
+                    currentActive = config.active;
+                    const robotsResp = await fetch('/api/robots');
+                    const robotsData = await robotsResp.json();
+                    const agentsResp = await fetch('/api/agents');
+                    const agentsData = await agentsResp.json();
+                    const robots = robotsData.robots || [];
+                    const agents = agentsData.agents || [];
+                    const robotGrid = document.getElementById('robot-grid');
+                    robotGrid.innerHTML = robots.map(r => {
+                        const activeVal = 'robots/' + r.id;
+                        return `<div class="robot-card" data-active="${activeVal}" onclick="selectIdentity('${activeVal.replace(/'/g, "\\'")}')">
+                            <div class="robot-name">${escapeHtml(r.name)}</div>
+                            <div class="robot-tagline">${escapeHtml(r.tagline || '')}</div>
+                            <div class="robot-desc">${escapeHtml(r.description || '')}</div>
+                        </div>`;
+                    }).join('');
+                    const agentGrid = document.getElementById('agent-grid');
+                    agentGrid.innerHTML = agents.map(a => {
+                        const activeVal = 'agents/' + a.id;
+                        return `<div class="robot-card" data-active="${activeVal}" onclick="selectIdentity('${activeVal.replace(/'/g, "\\'")}')">
+                            <div class="robot-name">${escapeHtml(a.name)}</div>
+                            <div class="robot-tagline">${escapeHtml(a.tagline || '')}</div>
+                            <div class="robot-desc">${escapeHtml(a.description || '')}</div>
+                        </div>`;
+                    }).join('');
+                    document.getElementById('persona-control').style.display = 'none';
+                    highlightActiveIdentity();
+                } else {
+                    identityMode = false;
+                    document.getElementById('persona-control').style.display = '';
+                    currentPersona = config.persona || '';
+                    const personasResp = await fetch('/api/personas');
+                    const personasData = await personasResp.json();
+                    allPersonas = personasData.personas || [];
+                    const demoRobots = allPersonas.filter(p => p.category === 'founders_demo');
+                    document.getElementById('robot-grid').innerHTML = demoRobots.map(r => `
+                        <div class="robot-card" data-id="${escapeHtml(r.id)}" onclick="selectRobot('${escapeHtml(r.id)}')">
+                            <div class="robot-name">${escapeHtml(r.name)}</div>
+                            <div class="robot-tagline">${escapeHtml(r.tagline || '')}</div>
+                            <div class="robot-desc">${escapeHtml(r.description || '')}</div>
+                        </div>
+                    `).join('');
+                    document.getElementById('agent-grid').innerHTML = '';
+                    const personaSelect = document.getElementById('persona-select');
+                    personaSelect.innerHTML = allPersonas.map(p => `<option value="${escapeHtml(p.id)}">${escapeHtml(p.name)}</option>`).join('');
+                    personaSelect.value = currentPersona;
+                    highlightActiveRobot();
+                }
 
-                document.getElementById('language-select').addEventListener('change', async (e) => {
-                    await updateConfig({ language: e.target.value });
-                });
-
+                const personaSelect = document.getElementById('persona-select');
+                if (personaSelect && !identityMode) {
+                    personaSelect.replaceWith(personaSelect.cloneNode(true));
+                    document.getElementById('persona-select').addEventListener('change', async (e) => {
+                        await updateConfig({ persona: e.target.value });
+                    });
+                }
             } catch (error) {
                 console.error('Failed to load config:', error);
             }
+        }
+
+        function highlightActiveIdentity() {
+            document.querySelectorAll('#robot-grid .robot-card, #agent-grid .robot-card').forEach(card => {
+                card.classList.toggle('active', card.dataset.active === currentActive);
+            });
+        }
+
+        function highlightActiveRobot() {
+            document.querySelectorAll('.robot-card').forEach(card => {
+                if (card.dataset.id !== undefined)
+                    card.classList.toggle('active', card.dataset.id === currentPersona);
+            });
+            const personaSelect = document.getElementById('persona-select');
+            if (personaSelect) personaSelect.value = currentPersona;
+        }
+
+        async function selectIdentity(activeValue) {
+            await updateConfig({ active: activeValue });
+            currentActive = activeValue;
+            highlightActiveIdentity();
+        }
+
+        async function selectRobot(id) {
+            await updateConfig({ persona: id });
+            currentPersona = id;
+            highlightActiveRobot();
         }
 
         async function updateConfig(updates) {
@@ -229,19 +388,18 @@ HTML = """<!DOCTYPE html>
                     body: JSON.stringify(updates)
                 });
                 const result = await response.json();
-
+                if (result.error) throw new Error(result.error);
                 const msg = document.getElementById('update-msg');
-                msg.textContent = '✓ ' + result.message;
+                msg.textContent = result.message || 'Config updated. Restart agent to apply.';
                 msg.style.display = 'block';
                 setTimeout(() => { msg.style.display = 'none'; }, 5000);
-
+                if (updates.active) currentActive = updates.active;
                 if (updates.persona) currentPersona = updates.persona;
                 if (updates.language) currentLanguage = updates.language;
-
             } catch (error) {
                 console.error('Failed to update config:', error);
                 const msg = document.getElementById('update-msg');
-                msg.textContent = '✗ Update failed: ' + error.message;
+                msg.textContent = 'Update failed: ' + (error.message || error);
                 msg.style.display = 'block';
             }
         }
@@ -252,12 +410,12 @@ HTML = """<!DOCTYPE html>
                 const data = await response.json();
 
                 document.getElementById('status').textContent =
-                    `Live • ${data.exchanges.length} exchanges`;
+                    `Live | ${data.exchanges.length} exchanges`;
                 document.getElementById('status').className = 'status active';
 
                 if (data.exchanges.length === 0) {
                     document.getElementById('feed').innerHTML =
-                        '<div class="empty">📻 No transmissions yet. Speak into the radio...</div>';
+                        '<div class="empty">No transmissions yet. Speak into the radio...</div>';
                     return;
                 }
 
@@ -280,10 +438,10 @@ HTML = """<!DOCTYPE html>
                             </div>
                             <div class="content">
                                 ${ex.transcript ? `
-                                    <div><span class="label transmission-label">▶ </span>${escapeHtml(ex.transcript)}</div>
+                                    <div><span class="label transmission-label">&gt; </span>${escapeHtml(ex.transcript)}</div>
                                 ` : ''}
                                 ${ex.response ? `
-                                    <div style="margin-top: 10px;"><span class="label response-label">◀ </span>${escapeHtml(ex.response)}</div>
+                                    <div style="margin-top: 10px;"><span class="label response-label">&lt; </span>${escapeHtml(ex.response)}</div>
                                 ` : ''}
                             </div>
                         </div>
@@ -303,18 +461,37 @@ HTML = """<!DOCTYPE html>
             return div.innerHTML;
         }
 
-        // Load config and personas
+        document.getElementById('language-select').addEventListener('change', async (e) => {
+            await updateConfig({ language: e.target.value });
+        });
         loadConfig();
-
-        // Load feed immediately
         loadFeed();
-
-        // Poll every 2 seconds
         setInterval(loadFeed, 2000);
     </script>
 </body>
 </html>
 """
+
+def scan_identity_dir(dir_path):
+    """Scan a directory for *.json identity files; return list of { id, name, tagline, description }."""
+    out = []
+    if not dir_path.is_dir():
+        return out
+    for f in sorted(dir_path.glob('*.json')):
+        try:
+            with open(f, 'r') as fp:
+                data = json.load(fp)
+            ident = data.get('identity') or {}
+            out.append({
+                'id': ident.get('id') or f.stem,
+                'name': ident.get('name') or f.stem,
+                'tagline': ident.get('tagline', ''),
+                'description': ident.get('description', ''),
+            })
+        except Exception:
+            continue
+    return out
+
 
 class SimpleFeedHandler(BaseHTTPRequestHandler):
 
@@ -328,29 +505,41 @@ class SimpleFeedHandler(BaseHTTPRequestHandler):
     def do_POST(self):
         """Handle POST requests"""
         if self.path == '/api/config':
-            # Update config
             try:
                 length = int(self.headers.get('Content-Length', 0))
                 body = self.rfile.read(length)
                 updates = json.loads(body.decode('utf-8'))
 
-                # Read current config
-                with open(CONFIG_PATH, 'r') as f:
-                    config = json.load(f)
-
-                # Update persona and/or language
-                if 'persona' in updates:
-                    config['llm']['agent_persona'] = updates['persona']
-                if 'language' in updates:
-                    config['llm']['response_language'] = updates['language']
-
-                # Write back
-                with open(CONFIG_PATH, 'w') as f:
-                    json.dump(config, f, indent=2)
-
-                print(f"Config updated: persona={updates.get('persona', 'unchanged')}, language={updates.get('language', 'unchanged')}")
-                self.send_json({'status': 'ok', 'message': 'Config updated. Restart agent to apply.'})
-
+                if 'active' in updates or ACTIVE_PATH.exists():
+                    active_data = {}
+                    if ACTIVE_PATH.exists():
+                        try:
+                            with open(ACTIVE_PATH, 'r') as f:
+                                active_data = json.load(f)
+                        except Exception:
+                            pass
+                    if 'active' in updates:
+                        active_data['active'] = updates['active']
+                    if 'language' in updates:
+                        active_data['response_language'] = updates['language']
+                    with open(ACTIVE_PATH, 'w') as f:
+                        json.dump(active_data, f, indent=2)
+                    print(f"Active updated: {active_data.get('active', '')}")
+                    self.send_json({'status': 'ok', 'message': 'Config updated. Restart agent to apply.'})
+                else:
+                    if not CONFIG_PATH.exists():
+                        self.send_json({'error': 'config.json not found'}, 500)
+                        return
+                    with open(CONFIG_PATH, 'r') as f:
+                        config = json.load(f)
+                    if 'persona' in updates:
+                        config['llm']['agent_persona'] = updates['persona']
+                    if 'language' in updates:
+                        config['llm']['response_language'] = updates['language']
+                    with open(CONFIG_PATH, 'w') as f:
+                        json.dump(config, f, indent=2)
+                    print(f"Config updated: persona={updates.get('persona', 'unchanged')}, language={updates.get('language', 'unchanged')}")
+                    self.send_json({'status': 'ok', 'message': 'Config updated. Restart agent to apply.'})
             except Exception as e:
                 self.send_json({'error': str(e)}, 500)
 
@@ -393,24 +582,52 @@ class SimpleFeedHandler(BaseHTTPRequestHandler):
             self.send_header('Content-Type', 'text/html; charset=utf-8')
             self.end_headers()
             self.wfile.write(HTML.encode('utf-8'))
+        elif self.path == '/api/robots':
+            try:
+                robots = scan_identity_dir(ROBOTS_DIR)
+                self.send_json({'robots': robots})
+            except Exception as e:
+                self.send_json({'error': str(e)}, 500)
+        elif self.path == '/api/agents':
+            try:
+                agents = scan_identity_dir(AGENTS_DIR)
+                self.send_json({'agents': agents})
+            except Exception as e:
+                self.send_json({'error': str(e)}, 500)
         elif self.path == '/api/personas':
-            # Return list of personas
             try:
                 with open(PERSONAS_PATH, 'r') as f:
                     personas_data = json.load(f)
-                personas_list = [{'id': k, 'name': v['name']} for k, v in personas_data.items()]
+                personas_list = [
+                    {
+                        'id': k,
+                        'name': v['name'],
+                        'category': v.get('category', ''),
+                        'tagline': v.get('tagline', ''),
+                        'description': v.get('description', ''),
+                    }
+                    for k, v in personas_data.items()
+                ]
                 self.send_json({'personas': personas_list})
             except Exception as e:
                 self.send_json({'error': str(e)}, 500)
         elif self.path == '/api/config':
-            # Return current config
             try:
-                with open(CONFIG_PATH, 'r') as f:
-                    config = json.load(f)
-                self.send_json({
-                    'persona': config['llm']['agent_persona'],
-                    'language': config['llm']['response_language']
-                })
+                if ACTIVE_PATH.exists():
+                    with open(ACTIVE_PATH, 'r') as f:
+                        active_data = json.load(f)
+                    self.send_json({
+                        'active': active_data.get('active', ''),
+                        'language': active_data.get('response_language', ''),
+                        'response_language': active_data.get('response_language', ''),
+                    })
+                else:
+                    with open(CONFIG_PATH, 'r') as f:
+                        config = json.load(f)
+                    self.send_json({
+                        'persona': config.get('llm', {}).get('agent_persona', ''),
+                        'language': config.get('llm', {}).get('response_language', '')
+                    })
             except Exception as e:
                 self.send_json({'error': str(e)}, 500)
         elif self.path == '/api/feed':

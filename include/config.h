@@ -109,6 +109,12 @@ struct WakeWordConfig {
     bool enabled = true;  ///< When true, respond only when transcript contains "hey memo"; when false, legacy (respond to every utterance)
 };
 
+/// Behavior mode for robot/agent identity: conversational (full pipeline), plugin_only (commands only), or llm_only (skip router/plugins).
+struct BehaviorConfig {
+    std::string mode = "conversational";  ///< "conversational" | "plugin_only" | "llm_only"
+    bool router_enabled = true;           ///< When false, skip router fast-path (e.g. for translator)
+};
+
 struct TXConfig {
     int max_transmit_ms = 20000;  // Maximum transmission time in ms (0 = no limit)
     int standby_delay_ms = 200;   // Delay after user speech ends before sending "Standby, over" (ms)
@@ -150,7 +156,11 @@ struct Config {
     PluginConfig plugins;
     MemoryConfig memory;
     WakeWordConfig wake_word;
-    
+    BehaviorConfig behavior;
+
+    /// When set, config was loaded from identity (active.json + defaults + identity file). Used for persona-change and save.
+    std::string config_dir_;
+
     std::string session_log_dir = "sessions";
     bool enable_replay_mode = false;
     std::string replay_wav_path;
