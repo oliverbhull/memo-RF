@@ -81,9 +81,10 @@ fi
 echo "Starting memo-rf..."
 echo ""
 
-# Run memo-rf (not using exec so cleanup trap works)
+# Run memo-rf (not using exec so cleanup trap works).
+# Pass config directory so active.json + defaults + robot/agent file are used (UI selection applies after restart).
 if [ $# -eq 0 ]; then
-    ./build/memo-rf config/config.json
+    ./build/memo-rf config
 else
     ./build/memo-rf "$@"
 fi

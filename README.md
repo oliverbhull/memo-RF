@@ -86,6 +86,30 @@ On Ubuntu or Jetson (aarch64):
 
 See `docs/JETSON_SETUP.md` for a concise Jetson setup and transfer steps.
 
+### Syncing from GitHub (e.g. Jetson after push from main)
+
+To keep the Jetson (or any second device) in sync with `main`:
+
+```bash
+git fetch origin
+git pull origin main
+```
+
+If pull reports **"Your local changes would be overwritten by merge"** (e.g. for `scripts/simple_feed.py`), either discard the local changes and pull, or stash them:
+
+```bash
+# Option A: Discard local changes and use what's on main (recommended so both devices match)
+git checkout -- scripts/simple_feed.py   # or the file(s) named in the error
+git pull origin main
+
+# Option B: Stash local changes, pull, then re-apply or drop the stash
+git stash push -m "local" -- scripts/simple_feed.py
+git pull origin main
+# git stash pop   # only if you need the stashed edits back
+```
+
+Then rebuild and run: `./build.sh` (or `cd build && make`), and start the feed UI with `python3 scripts/simple_feed.py`. The UI will show **Robots** and **Agents** cards (from `config/robots/` and `config/agents/`) when those directories exist; the old Persona dropdown only appears if there are no robot/agent identity files.
+
 ## Configuration
 
 1. Copy the example config:

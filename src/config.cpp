@@ -365,6 +365,21 @@ Config Config::load_from_file(const std::string& path) {
         return fs::is_directory(path_normalized, ec) && !ec;
     }();
 
+    // If path is a file (e.g. config/config.json), check whether the same directory has active.json.
+    // If so, use the directory so UI selection (active.json) is respected.
+    if (!is_dir) {
+        std::string::size_type slash = path_normalized.find_last_of("/\\");
+        if (slash != std::string::npos && slash + 1 < path_normalized.size()) {
+            std::string dir_part = path_normalized.substr(0, slash);
+            std::string active_in_dir = dir_part + "/active.json";
+            std::ifstream at(active_in_dir);
+            if (at.is_open()) {
+                Logger::info("Found active.json next to config file; loading identity from " + dir_part);
+                return load_from_file(dir_part);
+            }
+        }
+    }
+
     if (is_dir) {
         config_dir = path_normalized;
         if (!config_dir.empty() && config_dir.back() != '/' && config_dir.back() != '\\')

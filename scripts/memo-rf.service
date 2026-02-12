@@ -7,7 +7,7 @@ Wants=network-online.target
 Type=simple
 # Edit these paths if your repo is not in ~/dev/memo-RF
 WorkingDirectory=%h/dev/memo-RF
-ExecStart=%h/dev/memo-RF/build/memo-rf config/config.json
+ExecStart=%h/dev/memo-RF/build/memo-rf config
 Restart=on-failure
 RestartSec=5
 # Keep running after logout (only matters if user lingering is enabled)

@@ -538,7 +538,7 @@ class SimpleFeedHandler(BaseHTTPRequestHandler):
                     with open(ACTIVE_PATH, 'w') as f:
                         json.dump(active_data, f, indent=2)
                     print(f"Active updated: {active_data.get('active', '')}")
-                    self.send_json({'status': 'ok', 'message': 'Config updated. Restart agent to apply.'})
+                    self.send_json({'status': 'ok', 'message': 'Active set. Restart the memo-rf agent (e.g. ./run.sh or systemctl restart memo-rf) to use this robot/agent.'})
                 else:
                     if not CONFIG_PATH.exists():
                         self.send_json({'error': 'config.json not found'}, 500)
