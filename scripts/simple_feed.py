@@ -31,7 +31,7 @@ HTML = """<!DOCTYPE html>
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body {
-            font-family: 'Courier New', monospace;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Inter', 'Roboto', sans-serif;
             background: #0a0a0a;
             color: #e0e0e0;
             padding: 20px;
@@ -39,12 +39,13 @@ HTML = """<!DOCTYPE html>
         .header {
             margin-bottom: 20px;
             padding-bottom: 15px;
-            border-bottom: 2px solid #ff7700;
+            border-bottom: 2px solid #FF6200;
+            position: relative;
         }
         h1 {
-            color: #ff7700;
+            color: #FF6200;
             font-size: 2.5em;
-            text-shadow: 0 0 10px rgba(255, 119, 0, 0.5);
+            text-shadow: 0 0 10px rgba(255, 98, 0, 0.5);
             margin: 0;
             text-align: center;
         }
@@ -61,16 +62,75 @@ HTML = """<!DOCTYPE html>
             margin-top: 8px;
         }
         .status.active { color: #00ff00; }
+        .language-selector-top {
+            position: absolute;
+            top: 0;
+            right: 0;
+            background: #1a1a1a;
+            color: #FF6200;
+            border: 1px solid #333;
+            padding: 8px 12px;
+            border-radius: 4px;
+            font-family: inherit;
+            cursor: pointer;
+            font-size: 0.85em;
+        }
+        .language-selector-top:hover { border-color: #FF6200; }
+        .location-badge {
+            display: inline-block;
+            background: #2a2a2a;
+            color: #888;
+            padding: 2px 8px;
+            border-radius: 12px;
+            font-size: 0.7em;
+            margin-left: 8px;
+        }
         .update-message {
             text-align: center;
             padding: 10px;
             background: #2a1a0a;
-            border: 1px solid #ff7700;
+            border: 1px solid #FF6200;
             border-radius: 4px;
-            color: #ff7700;
+            color: #FF6200;
             font-size: 0.85em;
             margin-top: 10px;
             display: none;
+        }
+
+        /* --- Tabs --- */
+        .tabs {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 20px;
+            border-bottom: 2px solid #333;
+        }
+        .tab {
+            padding: 12px 24px;
+            background: #1a1a1a;
+            border: none;
+            border-radius: 8px 8px 0 0;
+            color: #888;
+            cursor: pointer;
+            font-family: inherit;
+            transition: all 0.2s;
+            font-size: 0.95em;
+        }
+        .tab:hover {
+            color: #FF6200;
+            background: #222;
+        }
+        .tab.active {
+            color: #FF6200;
+            background: #222;
+            border-bottom: 2px solid #FF6200;
+            position: relative;
+            bottom: -2px;
+        }
+        .tab-content {
+            display: none;
+        }
+        .tab-content.active {
+            display: block;
         }
 
         /* --- Robot Selector Grid --- */
@@ -102,21 +162,21 @@ HTML = """<!DOCTYPE html>
             position: relative;
         }
         .robot-card:hover {
-            border-color: #ff7700;
+            border-color: #FF6200;
             background: #1f1a14;
-            box-shadow: 0 0 20px rgba(255, 119, 0, 0.1);
+            box-shadow: 0 0 20px rgba(255, 98, 0, 0.1);
         }
         .robot-card.active {
-            border-color: #ff7700;
+            border-color: #FF6200;
             background: #1f1a14;
-            box-shadow: 0 0 20px rgba(255, 119, 0, 0.15);
+            box-shadow: 0 0 20px rgba(255, 98, 0, 0.15);
         }
         .robot-card.active::after {
             content: 'ACTIVE';
             position: absolute;
             top: 8px;
             right: 8px;
-            background: #ff7700;
+            background: #FF6200;
             color: #000;
             font-size: 0.6em;
             font-weight: bold;
@@ -125,7 +185,7 @@ HTML = """<!DOCTYPE html>
             letter-spacing: 0.5px;
         }
         .robot-name {
-            color: #ff7700;
+            color: #FF6200;
             font-weight: bold;
             font-size: 1em;
             margin-bottom: 2px;
@@ -161,15 +221,15 @@ HTML = """<!DOCTYPE html>
         }
         select {
             background: #1a1a1a;
-            color: #ff7700;
+            color: #FF6200;
             border: 1px solid #333;
             padding: 8px 12px;
             border-radius: 4px;
-            font-family: 'Courier New', monospace;
+            font-family: inherit;
             cursor: pointer;
             font-size: 0.85em;
         }
-        select:hover { border-color: #ff7700; }
+        select:hover { border-color: #FF6200; }
 
         /* --- Feed --- */
         .exchange {
@@ -181,8 +241,8 @@ HTML = """<!DOCTYPE html>
             transition: all 0.2s;
         }
         .exchange:hover {
-            border-color: #ff7700;
-            box-shadow: 0 0 15px rgba(255, 119, 0, 0.1);
+            border-color: #FF6200;
+            box-shadow: 0 0 15px rgba(255, 98, 0, 0.1);
         }
         .exchange-header {
             display: flex;
@@ -192,7 +252,7 @@ HTML = """<!DOCTYPE html>
             border-bottom: 1px solid #2a2a2a;
         }
         .persona {
-            color: #ff7700;
+            color: #FF6200;
             font-weight: bold;
         }
         .language-pill {
@@ -236,46 +296,52 @@ HTML = """<!DOCTYPE html>
 </head>
 <body>
     <div class="header">
+        <select id="language-select" class="language-selector-top">
+            <option value="">Default</option>
+            <option value="en">English</option>
+            <option value="es">Español</option>
+            <option value="fr">Français</option>
+            <option value="de">Deutsch</option>
+        </select>
         <h1>MEMO</h1>
         <div class="subtitle">Founders, Inc. | Artifact 2026 Demo Day</div>
         <div class="status" id="status">Connecting...</div>
         <div class="update-message" id="update-msg"></div>
     </div>
 
-    <div class="robots-section">
-        <div class="section-label">Robots</div>
+    <div class="tabs">
+        <button class="tab active" onclick="switchTab('robots')">Robots</button>
+        <button class="tab" onclick="switchTab('agents')">Agents</button>
+    </div>
+
+    <div id="robots-tab" class="tab-content active">
+        <div class="section-label">Robots Grid</div>
         <div class="robot-grid" id="robot-grid">
             <!-- Populated by JS -->
         </div>
+
+        <div class="controls-row" id="controls-row">
+            <div class="control-group" id="persona-control">
+                <label class="control-label">All Personas</label>
+                <select id="persona-select">
+                    <option>Loading...</option>
+                </select>
+            </div>
+        </div>
+
+        <div class="section-label">Feed</div>
+        <div id="feed"></div>
     </div>
-    <div class="robots-section">
-        <div class="section-label">Agents</div>
+
+    <div id="agents-tab" class="tab-content">
+        <div class="section-label">Agents Grid</div>
         <div class="robot-grid" id="agent-grid">
             <!-- Populated by JS -->
         </div>
-    </div>
 
-    <div class="controls-row" id="controls-row">
-        <div class="control-group" id="persona-control">
-            <label class="control-label">All Personas</label>
-            <select id="persona-select">
-                <option>Loading...</option>
-            </select>
-        </div>
-        <div class="control-group">
-            <label class="control-label">Language</label>
-            <select id="language-select">
-                <option value="">Default</option>
-                <option value="en">English</option>
-                <option value="es">Espa&ntilde;ol</option>
-                <option value="fr">Fran&ccedil;ais</option>
-                <option value="de">Deutsch</option>
-            </select>
-        </div>
+        <div class="section-label" style="margin-top: 24px;">Feed</div>
+        <div id="feed-agents"></div>
     </div>
-
-    <div class="section-label">Feed</div>
-    <div id="feed"></div>
 
     <script>
         let currentActive = '';
@@ -283,6 +349,15 @@ HTML = """<!DOCTYPE html>
         let currentLanguage = '';
         let allPersonas = [];
         let identityMode = false;
+        let currentTab = 'robots';
+
+        function switchTab(tabName) {
+            currentTab = tabName;
+            document.querySelectorAll('.tab').forEach(tab => tab.classList.remove('active'));
+            event.target.classList.add('active');
+            document.querySelectorAll('.tab-content').forEach(content => content.classList.remove('active'));
+            document.getElementById(tabName + '-tab').classList.add('active');
+        }
 
         async function loadConfig() {
             try {
@@ -427,8 +502,11 @@ HTML = """<!DOCTYPE html>
                 document.getElementById('status').className = 'status active';
 
                 if (data.exchanges.length === 0) {
-                    document.getElementById('feed').innerHTML =
-                        '<div class="empty">No transmissions yet. Speak into the radio...</div>';
+                    const emptyHtml = '<div class="empty">No transmissions yet. Speak into the radio...</div>';
+                    const feedElem = document.getElementById('feed');
+                    const feedAgentsElem = document.getElementById('feed-agents');
+                    if (feedElem) feedElem.innerHTML = emptyHtml;
+                    if (feedAgentsElem) feedAgentsElem.innerHTML = emptyHtml;
                     return;
                 }
 
@@ -446,6 +524,7 @@ HTML = """<!DOCTYPE html>
                                 <div>
                                     <span class="persona">${ex.persona_name || 'Unknown'}</span>
                                     <span class="language-pill">${langCode}</span>
+                                    <span class="location-badge">Fort Mason, Bldg C Floor 2N</span>
                                 </div>
                                 <span class="timestamp">${time}</span>
                             </div>
@@ -461,7 +540,10 @@ HTML = """<!DOCTYPE html>
                     `;
                 }
 
-                document.getElementById('feed').innerHTML = html;
+                const feedElem = document.getElementById('feed');
+                const feedAgentsElem = document.getElementById('feed-agents');
+                if (feedElem) feedElem.innerHTML = html;
+                if (feedAgentsElem) feedAgentsElem.innerHTML = html;
             } catch (error) {
                 document.getElementById('status').textContent = 'Error: ' + error.message;
                 document.getElementById('status').className = 'status';
@@ -523,6 +605,15 @@ class SimpleFeedHandler(BaseHTTPRequestHandler):
                 body = self.rfile.read(length)
                 updates = json.loads(body.decode('utf-8'))
 
+                # Load language_voices mapping
+                language_voices = {}
+                if Path(CONFIG_DIR / 'language_voices.json').exists():
+                    try:
+                        with open(CONFIG_DIR / 'language_voices.json', 'r') as f:
+                            language_voices = json.load(f)
+                    except Exception:
+                        pass
+
                 if 'active' in updates or ACTIVE_PATH.exists():
                     active_data = {}
                     if ACTIVE_PATH.exists():
@@ -535,10 +626,31 @@ class SimpleFeedHandler(BaseHTTPRequestHandler):
                         active_data['active'] = updates['active']
                     if 'language' in updates:
                         active_data['response_language'] = updates['language']
+
+                        # Also update main config voice path when language changes
+                        if CONFIG_PATH.exists() and updates['language'] in language_voices:
+                            try:
+                                with open(CONFIG_PATH, 'r') as f:
+                                    config = json.load(f)
+                                voice_filename = language_voices[updates['language']]
+                                # Get the base voice models directory
+                                voice_models_dir = config.get('tts', {}).get('voice_models_dir', '/home/oliver/models/piper')
+                                if voice_models_dir:
+                                    config['tts']['voice_path'] = str(Path(voice_models_dir) / voice_filename)
+                                else:
+                                    # Fallback: use absolute path construction
+                                    config['tts']['voice_path'] = f"/home/oliver/models/piper/{voice_filename}"
+                                config['llm']['response_language'] = updates['language']
+                                with open(CONFIG_PATH, 'w') as f:
+                                    json.dump(config, f, indent=2)
+                                print(f"Updated voice path to: {config['tts']['voice_path']}")
+                            except Exception as e:
+                                print(f"Warning: Failed to update voice path: {e}")
+
                     with open(ACTIVE_PATH, 'w') as f:
                         json.dump(active_data, f, indent=2)
-                    print(f"Active updated: {active_data.get('active', '')}")
-                    self.send_json({'status': 'ok', 'message': 'Active set. Restart the memo-rf agent (e.g. ./run.sh or systemctl restart memo-rf) to use this robot/agent.'})
+                    print(f"Active updated: {active_data.get('active', '')}, language: {active_data.get('response_language', '')}")
+                    self.send_json({'status': 'ok', 'message': 'Language updated. Restart the memo-rf agent (e.g. ./run.sh or systemctl restart memo-rf) to apply changes.'})
                 else:
                     if not CONFIG_PATH.exists():
                         self.send_json({'error': 'config.json not found'}, 500)
@@ -549,6 +661,17 @@ class SimpleFeedHandler(BaseHTTPRequestHandler):
                         config['llm']['agent_persona'] = updates['persona']
                     if 'language' in updates:
                         config['llm']['response_language'] = updates['language']
+
+                        # Update voice path based on language
+                        if updates['language'] in language_voices:
+                            voice_filename = language_voices[updates['language']]
+                            voice_models_dir = config.get('tts', {}).get('voice_models_dir', '/home/oliver/models/piper')
+                            if voice_models_dir:
+                                config['tts']['voice_path'] = str(Path(voice_models_dir) / voice_filename)
+                            else:
+                                config['tts']['voice_path'] = f"/home/oliver/models/piper/{voice_filename}"
+                            print(f"Updated voice path to: {config['tts']['voice_path']}")
+
                     with open(CONFIG_PATH, 'w') as f:
                         json.dump(config, f, indent=2)
                     print(f"Config updated: persona={updates.get('persona', 'unchanged')}, language={updates.get('language', 'unchanged')}")

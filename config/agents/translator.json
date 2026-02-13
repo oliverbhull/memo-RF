@@ -14,7 +14,7 @@
     "translation_model": "translategemma",
     "warmup_translation_model": true
   },
-  "voice": { "language": "es" },
+  "voice": {},
   "behavior": {
     "mode": "llm_only",
     "router_enabled": false,

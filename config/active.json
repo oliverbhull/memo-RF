@@ -1,1 +1,4 @@
-{"active": "robots/muni"}
+{
+  "active": "agents/translator",
+  "response_language": "fr"
+}
