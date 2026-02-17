@@ -44,7 +44,7 @@
     "timeout_ms": 30000,
     "max_tokens": 100,
     "context_max_turns_to_send": 6,
-    "keep_alive_sec": 300,
+    "keep_alive_sec": -1,
     "warmup_translation_model": false,
     "temperature": 0.3,
     "response_language": "",

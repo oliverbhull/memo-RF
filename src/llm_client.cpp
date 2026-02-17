@@ -313,7 +313,7 @@ private:
         request["model"] = model_override.empty() ? config_.model_name : model_override;
         request["messages"] = messages;
         request["stream"] = false;
-        if (config_.keep_alive_sec > 0) request["keep_alive"] = config_.keep_alive_sec;
+        if (config_.keep_alive_sec != 0) request["keep_alive"] = config_.keep_alive_sec;
 
         // Ollama options (includes anti-repetition). num_predict=0 means no limit.
         int num_predict = (max_tokens > 0) ? max_tokens : config_.max_tokens;
@@ -678,7 +678,7 @@ public:
         request["model"] = model_override.empty() ? config_.model_name : model_override;
         request["messages"] = messages;
         request["stream"] = true;
-        if (config_.keep_alive_sec > 0) request["keep_alive"] = config_.keep_alive_sec;
+        if (config_.keep_alive_sec != 0) request["keep_alive"] = config_.keep_alive_sec;
         int num_predict = (max_tokens > 0) ? max_tokens : config_.max_tokens;
         json options;
         options["temperature"] = config_.temperature;

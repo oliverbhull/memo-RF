@@ -302,9 +302,6 @@ private:
             return synth_via_system_call(text);  // Fallback
         }
 
-        // Give piper time to start processing before we start reading
-        usleep(100000);  // 100ms initial delay
-
         // Read raw audio from piper stdout
         // Piper outputs 16-bit PCM at 22050Hz
         AudioBuffer raw_audio;
@@ -313,7 +310,7 @@ private:
         const int piper_sample_rate = 22050;
         char buffer[8192];  // Larger buffer
         int consecutive_empty = 0;
-        const int max_empty_after_data = 100;  // 100 * 10ms = 1s of no data after receiving some
+        const int max_empty_after_data = 30;   // 30 * 10ms = 300ms of no data after receiving some
         const int max_empty_initial = 300;     // 300 * 10ms = 3s timeout waiting for first data
         bool received_any_data = false;
 
