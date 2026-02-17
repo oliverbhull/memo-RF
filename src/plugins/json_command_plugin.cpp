@@ -205,6 +205,42 @@ bool JsonCommandPlugin::try_handle(const std::string& transcript, ActionResult& 
     return false;  // No command matched
 }
 
+std::vector<std::string> JsonCommandPlugin::get_command_list() const {
+    std::vector<std::string> command_list;
+    for (const auto& cmd : commands_) {
+        if (!cmd.phrases.empty()) {
+            std::string command_text = cmd.phrases[0];
+
+            // If command has enum parameters, list the available options
+            for (const auto& param : cmd.params) {
+                if (param.type == "enum" && !param.enum_values.mapping.empty()) {
+                    std::vector<std::string> options;
+                    for (const auto& [canonical, variants] : param.enum_values.mapping) {
+                        options.push_back(canonical);
+                    }
+
+                    if (!options.empty()) {
+                        command_text += " ";
+                        for (size_t i = 0; i < options.size(); ++i) {
+                            if (i > 0) {
+                                if (i == options.size() - 1) {
+                                    command_text += " or ";
+                                } else {
+                                    command_text += ", ";
+                                }
+                            }
+                            command_text += options[i];
+                        }
+                    }
+                }
+            }
+
+            command_list.push_back(command_text);
+        }
+    }
+    return command_list;
+}
+
 bool JsonCommandPlugin::try_match_command(const std::string& lower_transcript,
                                            const CommandDef& cmd,
                                            std::map<std::string, std::string>& extracted_params,

@@ -28,7 +28,7 @@
     "translation_model": "translategemma",
     "temperature": 0.7,
     "agent_persona": "municipal",
-    "response_language": "fr",
+    "response_language": "es",
     "stop_sequences": [
       "</s>",
       "\n\n",
@@ -38,7 +38,7 @@
     "use_manufacturing_router": false
   },
   "tts": {
-    "voice_path": "/home/oliver/models/piper/fr/fr_FR/siwis/medium/fr_FR-siwis-medium.onnx",
+    "voice_path": "/home/oliver/models/piper/es/es_ES/davefx/medium/es_ES-davefx-medium.onnx",
     "voice_models_dir": "",
     "piper_path": "/home/oliver/dev/piper/build/piper",
     "espeak_data_path": "/usr/lib/aarch64-linux-gnu/espeak-ng-data",

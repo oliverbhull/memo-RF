@@ -76,6 +76,20 @@ HTML = """<!DOCTYPE html>
             font-size: 0.85em;
         }
         .language-selector-top:hover { border-color: #FF6200; }
+        .input-language-selector {
+            position: absolute;
+            top: 0;
+            left: 0;
+            background: #1a1a1a;
+            color: #6ab0f3;
+            border: 1px solid #333;
+            padding: 8px 12px;
+            border-radius: 4px;
+            font-family: inherit;
+            cursor: pointer;
+            font-size: 0.85em;
+        }
+        .input-language-selector:hover { border-color: #6ab0f3; }
         .location-badge {
             display: inline-block;
             background: #2a2a2a;
@@ -296,6 +310,13 @@ HTML = """<!DOCTYPE html>
 </head>
 <body>
     <div class="header">
+        <select id="input-language-select" class="input-language-selector">
+            <option value="">Auto-detect</option>
+            <option value="en">English</option>
+            <option value="es">Español</option>
+            <option value="fr">Français</option>
+            <option value="de">Deutsch</option>
+        </select>
         <select id="language-select" class="language-selector-top">
             <option value="">Default</option>
             <option value="en">English</option>
@@ -347,6 +368,7 @@ HTML = """<!DOCTYPE html>
         let currentActive = '';
         let currentPersona = '';
         let currentLanguage = '';
+        let currentInputLanguage = '';
         let allPersonas = [];
         let identityMode = false;
         let currentTab = 'robots';
@@ -376,6 +398,11 @@ HTML = """<!DOCTYPE html>
                 const langSelect = document.getElementById('language-select');
                 const langValues = Array.from(langSelect.options).map(o => o.value);
                 langSelect.value = langValues.includes(currentLanguage) ? currentLanguage : '';
+
+                currentInputLanguage = config.input_language || '';
+                const inputLangSelect = document.getElementById('input-language-select');
+                const inputLangValues = Array.from(inputLangSelect.options).map(o => o.value);
+                inputLangSelect.value = inputLangValues.includes(currentInputLanguage) ? currentInputLanguage : '';
 
                 const hasRobotsOrAgents = robots.length > 0 || agents.length > 0;
                 if (hasRobotsOrAgents) {
@@ -484,6 +511,7 @@ HTML = """<!DOCTYPE html>
                 if (updates.active) currentActive = updates.active;
                 if (updates.persona) currentPersona = updates.persona;
                 if (updates.language) currentLanguage = updates.language;
+                if (updates.input_language !== undefined) currentInputLanguage = updates.input_language;
             } catch (error) {
                 console.error('Failed to update config:', error);
                 const msg = document.getElementById('update-msg');
@@ -558,6 +586,9 @@ HTML = """<!DOCTYPE html>
 
         document.getElementById('language-select').addEventListener('change', async (e) => {
             await updateConfig({ language: e.target.value });
+        });
+        document.getElementById('input-language-select').addEventListener('change', async (e) => {
+            await updateConfig({ input_language: e.target.value });
         });
         loadConfig();
         loadFeed();
@@ -647,6 +678,19 @@ class SimpleFeedHandler(BaseHTTPRequestHandler):
                             except Exception as e:
                                 print(f"Warning: Failed to update voice path: {e}")
 
+                    # Handle input_language updates (STT language)
+                    if 'input_language' in updates:
+                        if CONFIG_PATH.exists():
+                            try:
+                                with open(CONFIG_PATH, 'r') as f:
+                                    config = json.load(f)
+                                config['stt']['language'] = updates['input_language']
+                                with open(CONFIG_PATH, 'w') as f:
+                                    json.dump(config, f, indent=2)
+                                print(f"Updated STT language to: {updates['input_language']}")
+                            except Exception as e:
+                                print(f"Warning: Failed to update STT language: {e}")
+
                     with open(ACTIVE_PATH, 'w') as f:
                         json.dump(active_data, f, indent=2)
                     print(f"Active updated: {active_data.get('active', '')}, language: {active_data.get('response_language', '')}")
@@ -672,9 +716,13 @@ class SimpleFeedHandler(BaseHTTPRequestHandler):
                                 config['tts']['voice_path'] = f"/home/oliver/models/piper/{voice_filename}"
                             print(f"Updated voice path to: {config['tts']['voice_path']}")
 
+                    if 'input_language' in updates:
+                        config['stt']['language'] = updates['input_language']
+                        print(f"Updated STT language to: {updates['input_language']}")
+
                     with open(CONFIG_PATH, 'w') as f:
                         json.dump(config, f, indent=2)
-                    print(f"Config updated: persona={updates.get('persona', 'unchanged')}, language={updates.get('language', 'unchanged')}")
+                    print(f"Config updated: persona={updates.get('persona', 'unchanged')}, language={updates.get('language', 'unchanged')}, input_language={updates.get('input_language', 'unchanged')}")
                     self.send_json({'status': 'ok', 'message': 'Config updated. Restart agent to apply.'})
             except Exception as e:
                 self.send_json({'error': str(e)}, 500)
@@ -749,6 +797,13 @@ class SimpleFeedHandler(BaseHTTPRequestHandler):
                 self.send_json({'error': str(e)}, 500)
         elif self.path == '/api/config':
             try:
+                # Always read main config for input_language
+                input_lang = ''
+                if CONFIG_PATH.exists():
+                    with open(CONFIG_PATH, 'r') as f:
+                        config_data = json.load(f)
+                    input_lang = config_data.get('stt', {}).get('language', '')
+
                 if ACTIVE_PATH.exists():
                     with open(ACTIVE_PATH, 'r') as f:
                         active_data = json.load(f)
@@ -756,13 +811,15 @@ class SimpleFeedHandler(BaseHTTPRequestHandler):
                         'active': active_data.get('active', ''),
                         'language': active_data.get('response_language', ''),
                         'response_language': active_data.get('response_language', ''),
+                        'input_language': input_lang,
                     })
                 else:
                     with open(CONFIG_PATH, 'r') as f:
                         config = json.load(f)
                     self.send_json({
                         'persona': config.get('llm', {}).get('agent_persona', ''),
-                        'language': config.get('llm', {}).get('response_language', '')
+                        'language': config.get('llm', {}).get('response_language', ''),
+                        'input_language': input_lang,
                     })
             except Exception as e:
                 self.send_json({'error': str(e)}, 500)

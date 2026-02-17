@@ -33,6 +33,10 @@ public:
     /// Domain-specific vocabulary for Whisper STT initial_prompt boosting.
     /// Return words/phrases the user might say that are domain-specific.
     virtual std::vector<std::string> vocab() const { return {}; }
+
+    /// Get list of available commands for help text.
+    /// Returns brief command descriptions (e.g., "move forward", "emergency stop").
+    virtual std::vector<std::string> get_command_list() const { return {}; }
 };
 
 } // namespace memo_rf

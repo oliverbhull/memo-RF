@@ -21,6 +21,7 @@ public:
     bool try_handle(const std::string& transcript, ActionResult& result) override;
     int priority() const override { return priority_; }
     std::vector<std::string> vocab() const override { return vocab_words_; }
+    std::vector<std::string> get_command_list() const override;
 
 private:
     /// Parameter extraction types

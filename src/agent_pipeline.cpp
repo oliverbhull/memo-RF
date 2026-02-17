@@ -459,7 +459,28 @@ void AgentPipeline::handle_speech_end(
     // For plugin_only mode, don't route to LLM; only plugin commands are valid
     if (config_->behavior.mode == "plugin_only") {
         Logger::info("Plugin-only mode: No command recognized");
-        std::string error_text = "Command not recognized. Please repeat. Over.";
+
+        // Collect available commands from all plugins
+        std::vector<std::string> all_commands;
+        if (action_dispatcher_) {
+            for (const auto& plugin : action_dispatcher_->plugins()) {
+                std::vector<std::string> plugin_commands = plugin->get_command_list();
+                all_commands.insert(all_commands.end(), plugin_commands.begin(), plugin_commands.end());
+            }
+        }
+
+        // Build error message with available commands
+        std::string error_text = "Command not recognized. Available commands are: ";
+        if (!all_commands.empty()) {
+            for (size_t i = 0; i < all_commands.size(); ++i) {
+                if (i > 0) error_text += ", ";
+                error_text += all_commands[i];
+            }
+            error_text += ". Over.";
+        } else {
+            error_text = "Command not recognized. Please repeat. Over.";
+        }
+
         // Record the response text so it appears in the feed
         recorder_->record_llm_response(error_text, utterance_id);
         response_audio = tts_->synth_vox(error_text);
