@@ -1,9 +1,10 @@
 {
   "audio": {
-    "input_device": "25",
-    "output_device": "25",
+    "input_device": "USB Audio",
+    "output_device": "USB Audio",
     "sample_rate": 16000,
-    "input_sample_rate": 48000
+    "input_sample_rate": 48000,
+    "output_sample_rate": 48000
   },
   "vad": {
     "threshold": 0.05,

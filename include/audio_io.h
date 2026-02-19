@@ -39,7 +39,8 @@ public:
     bool start(const std::string& input_device,
                const std::string& output_device,
                int sample_rate,
-               int input_sample_rate = 0);
+               int input_sample_rate = 0,
+               int output_sample_rate = 0);
     
     /**
      * @brief Read a frame of audio from input stream (blocking)

@@ -12,6 +12,8 @@ struct AudioConfig {
     int sample_rate = 16000;
     /// If set (e.g. 48000), open input device at this rate and resample to sample_rate for pipeline. Use when device does not support 16 kHz.
     int input_sample_rate = 0;
+    /// If set (e.g. 48000), open output device at this rate and resample from sample_rate for playback. Use when device does not support 16 kHz.
+    int output_sample_rate = 0;
 };
 
 struct VADConfig {

@@ -23,6 +23,25 @@ namespace {
 }
 
 namespace {
+    AudioBuffer resample_buffer(const AudioBuffer& input, int from_rate, int to_rate) {
+        if (from_rate == to_rate) return input;
+        float ratio = static_cast<float>(to_rate) / static_cast<float>(from_rate);
+        size_t output_samples = static_cast<size_t>(input.size() * ratio);
+        AudioBuffer output;
+        output.reserve(output_samples);
+        for (size_t i = 0; i < output_samples; i++) {
+            float input_pos = static_cast<float>(i) / ratio;
+            size_t idx0 = static_cast<size_t>(input_pos);
+            size_t idx1 = std::min(idx0 + 1, input.size() - 1);
+            if (idx0 >= input.size()) break;
+            float t = input_pos - idx0;
+            float s0 = static_cast<float>(input[idx0]);
+            float s1 = static_cast<float>(input[idx1]);
+            output.push_back(static_cast<Sample>(s0 * (1.0f - t) + s1 * t));
+        }
+        return output;
+    }
+
     AudioFrame resample_input(const AudioFrame& input, int from_rate, int to_rate) {
         if (from_rate == to_rate) return input;
         float ratio = static_cast<float>(from_rate) / static_cast<float>(to_rate);
@@ -46,15 +65,16 @@ namespace {
 class AudioIO::Impl {
 public:
     Impl() : input_stream_(nullptr), output_stream_(nullptr), full_duplex_stream_(nullptr),
-             sample_rate_(16000), input_sample_rate_(16000), use_full_duplex_(false), playback_complete_(true), stop_playback_(false), trailing_silence_frames_(0) {}
+             sample_rate_(16000), input_sample_rate_(16000), output_sample_rate_(16000), use_full_duplex_(false), playback_complete_(true), stop_playback_(false), trailing_silence_frames_(0) {}
     
     ~Impl() {
         stop();
     }
     
-    bool start(const std::string& input_device, const std::string& output_device, int sample_rate, int input_sample_rate = 0) {
+    bool start(const std::string& input_device, const std::string& output_device, int sample_rate, int input_sample_rate = 0, int output_sample_rate = 0) {
         sample_rate_ = sample_rate;
         input_sample_rate_ = (input_sample_rate != 0) ? input_sample_rate : sample_rate;
+        output_sample_rate_ = (output_sample_rate != 0) ? output_sample_rate : sample_rate;
         playback_complete_ = true;
         stop_playback_ = false;
         trailing_silence_frames_ = 0;
@@ -146,7 +166,8 @@ public:
         Logger::info(dev_oss2.str());
         
         // If same device, try full-duplex stream first (works better for devices like walkie-talkies)
-        if (input_idx == output_idx) {
+        // Skip full-duplex if either rate differs from pipeline rate — separate streams handle resampling
+        if (input_idx == output_idx && input_sample_rate_ == sample_rate_ && output_sample_rate_ == sample_rate_) {
             Logger::info("Same device for input/output, attempting full-duplex stream...");
             
             PaStreamParameters input_params;
@@ -277,8 +298,9 @@ public:
         output_params.suggestedLatency = Pa_GetDeviceInfo(output_idx)->defaultLowOutputLatency;
         output_params.hostApiSpecificStreamInfo = nullptr;
         
-        err = Pa_OpenStream(&output_stream_, nullptr, &output_params, sample_rate_,
-                           SAMPLES_PER_FRAME, paClipOff, audio_callback, this);
+        const unsigned long output_frames = (output_sample_rate_ * 20) / 1000;  // 20 ms at output rate
+        err = Pa_OpenStream(&output_stream_, nullptr, &output_params, output_sample_rate_,
+                           output_frames, paClipOff, audio_callback, this);
         if (err != paNoError) {
             Logger::error("Failed to open output stream: " + std::string(Pa_GetErrorText(err)));
             Pa_CloseStream(input_stream_);
@@ -377,27 +399,32 @@ public:
         stop_playback_ = false;
         playback_complete_ = false;
         trailing_silence_frames_ = 0;
-        
+
         // Clear queue and add new buffer
         while (!playback_queue_.empty()) {
             playback_queue_.pop();
         }
-        
+
+        const AudioBuffer& src = (output_sample_rate_ != sample_rate_)
+            ? resample_buffer(buffer, sample_rate_, output_sample_rate_)
+            : buffer;
+        const unsigned long out_frame_size = (output_sample_rate_ * 20) / 1000;
+
         // Split buffer into frames
-        for (size_t i = 0; i < buffer.size(); i += SAMPLES_PER_FRAME) {
+        for (size_t i = 0; i < src.size(); i += out_frame_size) {
             AudioFrame frame;
-            size_t remaining = buffer.size() - i;
-            size_t frame_size = (remaining < SAMPLES_PER_FRAME) ? remaining : SAMPLES_PER_FRAME;
-            frame.assign(buffer.begin() + i, buffer.begin() + i + frame_size);
-            
+            size_t remaining = src.size() - i;
+            size_t frame_size = (remaining < out_frame_size) ? remaining : out_frame_size;
+            frame.assign(src.begin() + i, src.begin() + i + frame_size);
+
             // Pad if needed
-            if (frame.size() < SAMPLES_PER_FRAME) {
-                frame.resize(SAMPLES_PER_FRAME, 0);
+            if (frame.size() < out_frame_size) {
+                frame.resize(out_frame_size, 0);
             }
-            
+
             playback_queue_.push(frame);
         }
-        
+
         return true;
     }
 
@@ -405,13 +432,17 @@ public:
         std::lock_guard<std::mutex> lock(playback_mutex_);
         bool was_empty = playback_queue_.empty();
         trailing_silence_frames_ = 0;  // New data: require trailing silence again before complete
-        for (size_t i = 0; i < buffer.size(); i += SAMPLES_PER_FRAME) {
+        const AudioBuffer resampled = (output_sample_rate_ != sample_rate_)
+            ? resample_buffer(buffer, sample_rate_, output_sample_rate_)
+            : buffer;
+        const unsigned long out_frame_size = (output_sample_rate_ * 20) / 1000;
+        for (size_t i = 0; i < resampled.size(); i += out_frame_size) {
             AudioFrame frame;
-            size_t remaining = buffer.size() - i;
-            size_t frame_size = (remaining < SAMPLES_PER_FRAME) ? remaining : SAMPLES_PER_FRAME;
-            frame.assign(buffer.begin() + i, buffer.begin() + i + frame_size);
-            if (frame.size() < SAMPLES_PER_FRAME) {
-                frame.resize(SAMPLES_PER_FRAME, 0);
+            size_t remaining = resampled.size() - i;
+            size_t frame_size = (remaining < out_frame_size) ? remaining : out_frame_size;
+            frame.assign(resampled.begin() + i, resampled.begin() + i + frame_size);
+            if (frame.size() < out_frame_size) {
+                frame.resize(out_frame_size, 0);
             }
             playback_queue_.push(frame);
         }
@@ -603,10 +634,28 @@ private:
                 }
             }
         }
-        
+
+        // Try substring name match (e.g. "USB Audio" matches "USB Audio Device: - (hw:1,0)")
+        for (int i = 0; i < num_devices; i++) {
+            const PaDeviceInfo* info = Pa_GetDeviceInfo(i);
+            if (info && std::string(info->name).find(name) != std::string::npos) {
+                if (is_input && info->maxInputChannels > 0) {
+                    std::ostringstream oss;
+                    oss << "Found input device by substring '" << name << "': [" << i << "] " << info->name;
+                    Logger::info(oss.str());
+                    return i;
+                } else if (!is_input && info->maxOutputChannels > 0) {
+                    std::ostringstream oss;
+                    oss << "Found output device by substring '" << name << "': [" << i << "] " << info->name;
+                    Logger::info(oss.str());
+                    return i;
+                }
+            }
+        }
+
         return -1;
     }
-    
+
     static int audio_callback(const void* input, void* output,
                              unsigned long frame_count,
                              const PaStreamCallbackTimeInfo* time_info,
@@ -691,6 +740,7 @@ private:
     PaStream* full_duplex_stream_;
     int sample_rate_;
     int input_sample_rate_;
+    int output_sample_rate_;
     bool use_full_duplex_;
     
     mutable std::mutex playback_mutex_;
@@ -706,8 +756,8 @@ private:
 AudioIO::AudioIO() : pimpl_(std::make_unique<Impl>()) {}
 AudioIO::~AudioIO() = default;
 
-bool AudioIO::start(const std::string& input_device, const std::string& output_device, int sample_rate, int input_sample_rate) {
-    return pimpl_->start(input_device, output_device, sample_rate, input_sample_rate);
+bool AudioIO::start(const std::string& input_device, const std::string& output_device, int sample_rate, int input_sample_rate, int output_sample_rate) {
+    return pimpl_->start(input_device, output_device, sample_rate, input_sample_rate, output_sample_rate);
 }
 
 bool AudioIO::read_frame(AudioFrame& frame) {

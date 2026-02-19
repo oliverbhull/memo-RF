@@ -64,7 +64,8 @@ public:
         if (!audio_io_->start(config_.audio.input_device,
                               config_.audio.output_device,
                               config_.audio.sample_rate,
-                              config_.audio.input_sample_rate)) {
+                              config_.audio.input_sample_rate,
+                              config_.audio.output_sample_rate)) {
             Logger::error("Failed to start audio I/O");
             return false;
         }

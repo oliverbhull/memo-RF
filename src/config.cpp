@@ -180,6 +180,7 @@ void apply_json_to_config(memo_rf::Config& cfg, const json& j) {
         if (a.contains("output_device")) cfg.audio.output_device = a["output_device"];
         if (a.contains("sample_rate")) cfg.audio.sample_rate = a["sample_rate"];
         if (a.contains("input_sample_rate")) cfg.audio.input_sample_rate = a["input_sample_rate"];
+        if (a.contains("output_sample_rate")) cfg.audio.output_sample_rate = a["output_sample_rate"];
     }
     
     // VAD config
@@ -511,6 +512,7 @@ void Config::save_to_file(const std::string& path) const {
     j["audio"]["output_device"] = audio.output_device;
     j["audio"]["sample_rate"] = audio.sample_rate;
     if (audio.input_sample_rate != 0) j["audio"]["input_sample_rate"] = audio.input_sample_rate;
+    if (audio.output_sample_rate != 0) j["audio"]["output_sample_rate"] = audio.output_sample_rate;
     
     j["vad"]["threshold"] = vad.threshold;
     j["vad"]["silence_threshold"] = vad.silence_threshold;
