@@ -1,5 +1,8 @@
 # Build artifacts
 build/
+
+# Frontend (dashboard_dist is committed so Jetson can pull without Node)
+frontend/node_modules/
 *.o
 *.a
 *.so

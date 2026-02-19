@@ -234,8 +234,22 @@ MEMO_RF_FEED_PORT=8080 ./run.sh
 
 ### Running Feed Server Standalone
 
-You can also run the feed server independently:
+You can also run the feed server independently. For the **demo dashboard** (React UI with Live Overview, channel feed, and simulated hotel data):
 
+1. Build the dashboard (first time or after frontend changes):
+   ```bash
+   cd frontend && npm install && npm run build && cd ..
+   ```
+   This writes static files to `dashboard_dist/`.
+
+2. Start the feed server (serves API + dashboard at http://localhost:5050):
+   ```bash
+   python3 scripts/simple_feed.py
+   ```
+
+3. Open http://localhost:5050 in a browser. The **Demo** channel shows live transmissions from the memo-rf agent (when it posts to `/api/feed/notify`); channels CH1–CH7 show simulated data from `hotel_14day.csv`.
+
+To run the legacy feed server instead:
 ```bash
 python3 scripts/feed_server.py [--port PORT] [--host HOST] [--sessions-dir DIR]
 ```

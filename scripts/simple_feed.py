@@ -1,602 +1,42 @@
 #!/usr/bin/env python3
 """
 DEAD SIMPLE Feed Server
-Just receives POSTs and shows them. No complexity.
+API-only: receives POSTs, serves dashboard static files. No embedded HTML.
 """
 
 from http.server import HTTPServer, BaseHTTPRequestHandler
 import json
-from datetime import datetime
+import csv
+import mimetypes
 from pathlib import Path
 
 # In-memory storage
 events = []
 MAX_EVENTS = 100
 
-# Config paths
-CONFIG_DIR = Path(__file__).parent.parent / 'config'
+# Paths (repo root = parent of scripts/)
+SCRIPT_DIR = Path(__file__).resolve().parent
+REPO_ROOT = SCRIPT_DIR.parent
+CONFIG_DIR = REPO_ROOT / 'config'
 CONFIG_PATH = CONFIG_DIR / 'config.json'
 PERSONAS_PATH = CONFIG_DIR / 'personas.json'
 ACTIVE_PATH = CONFIG_DIR / 'active.json'
 ROBOTS_DIR = CONFIG_DIR / 'robots'
 AGENTS_DIR = CONFIG_DIR / 'agents'
+DASHBOARD_DIR = REPO_ROOT / 'dashboard_dist'
+CSV_PATH = REPO_ROOT / 'hotel_14day.csv'
 
-# Simple HTML UI
-HTML = """<!DOCTYPE html>
-<html>
-<head>
-    <title>MEMO</title>
-    <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1">
-    <style>
-        * { margin: 0; padding: 0; box-sizing: border-box; }
-        body {
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Inter', 'Roboto', sans-serif;
-            background: #0a0a0a;
-            color: #e0e0e0;
-            padding: 20px;
-        }
-        .header {
-            margin-bottom: 20px;
-            padding-bottom: 15px;
-            border-bottom: 2px solid #FF6200;
-            position: relative;
-        }
-        h1 {
-            color: #FF6200;
-            font-size: 2.5em;
-            text-shadow: 0 0 10px rgba(255, 98, 0, 0.5);
-            margin: 0;
-            text-align: center;
-        }
-        .subtitle {
-            text-align: center;
-            color: #666;
-            font-size: 0.8em;
-            margin-top: 4px;
-        }
-        .status {
-            text-align: center;
-            color: #888;
-            font-size: 0.9em;
-            margin-top: 8px;
-        }
-        .status.active { color: #00ff00; }
-        .language-selector-top {
-            position: absolute;
-            top: 0;
-            right: 0;
-            background: #1a1a1a;
-            color: #FF6200;
-            border: 1px solid #333;
-            padding: 8px 12px;
-            border-radius: 4px;
-            font-family: inherit;
-            cursor: pointer;
-            font-size: 0.85em;
-        }
-        .language-selector-top:hover { border-color: #FF6200; }
-        .input-language-selector {
-            position: absolute;
-            top: 0;
-            left: 0;
-            background: #1a1a1a;
-            color: #6ab0f3;
-            border: 1px solid #333;
-            padding: 8px 12px;
-            border-radius: 4px;
-            font-family: inherit;
-            cursor: pointer;
-            font-size: 0.85em;
-        }
-        .input-language-selector:hover { border-color: #6ab0f3; }
-        .location-badge {
-            display: inline-block;
-            background: #2a2a2a;
-            color: #888;
-            padding: 2px 8px;
-            border-radius: 12px;
-            font-size: 0.7em;
-            margin-left: 8px;
-        }
-        .update-message {
-            text-align: center;
-            padding: 10px;
-            background: #2a1a0a;
-            border: 1px solid #FF6200;
-            border-radius: 4px;
-            color: #FF6200;
-            font-size: 0.85em;
-            margin-top: 10px;
-            display: none;
-        }
+# department_from -> channel (align with dashboard labels)
+DEPT_TO_CHANNEL = {
+    'front_desk': 1,
+    'housekeeping': 2,
+    'maintenance': 3,
+    'security': 4,
+    'food_beverage': 5,
+    'management': 6,
+    'concierge': 7,
+}
 
-        /* --- Tabs --- */
-        .tabs {
-            display: flex;
-            gap: 10px;
-            margin-bottom: 20px;
-            border-bottom: 2px solid #333;
-        }
-        .tab {
-            padding: 12px 24px;
-            background: #1a1a1a;
-            border: none;
-            border-radius: 8px 8px 0 0;
-            color: #888;
-            cursor: pointer;
-            font-family: inherit;
-            transition: all 0.2s;
-            font-size: 0.95em;
-        }
-        .tab:hover {
-            color: #FF6200;
-            background: #222;
-        }
-        .tab.active {
-            color: #FF6200;
-            background: #222;
-            border-bottom: 2px solid #FF6200;
-            position: relative;
-            bottom: -2px;
-        }
-        .tab-content {
-            display: none;
-        }
-        .tab-content.active {
-            display: block;
-        }
-
-        /* --- Robot Selector Grid --- */
-        .robots-section {
-            margin-bottom: 24px;
-        }
-        .section-label {
-            color: #888;
-            font-size: 0.75em;
-            text-transform: uppercase;
-            letter-spacing: 1px;
-            margin-bottom: 10px;
-        }
-        .robot-grid {
-            display: grid;
-            grid-template-columns: repeat(3, 1fr);
-            gap: 10px;
-        }
-        @media (max-width: 700px) {
-            .robot-grid { grid-template-columns: repeat(2, 1fr); }
-        }
-        .robot-card {
-            background: #1a1a1a;
-            border: 2px solid #2a2a2a;
-            border-radius: 8px;
-            padding: 14px;
-            cursor: pointer;
-            transition: all 0.15s;
-            position: relative;
-        }
-        .robot-card:hover {
-            border-color: #FF6200;
-            background: #1f1a14;
-            box-shadow: 0 0 20px rgba(255, 98, 0, 0.1);
-        }
-        .robot-card.active {
-            border-color: #FF6200;
-            background: #1f1a14;
-            box-shadow: 0 0 20px rgba(255, 98, 0, 0.15);
-        }
-        .robot-card.active::after {
-            content: 'ACTIVE';
-            position: absolute;
-            top: 8px;
-            right: 8px;
-            background: #FF6200;
-            color: #000;
-            font-size: 0.6em;
-            font-weight: bold;
-            padding: 2px 6px;
-            border-radius: 3px;
-            letter-spacing: 0.5px;
-        }
-        .robot-name {
-            color: #FF6200;
-            font-weight: bold;
-            font-size: 1em;
-            margin-bottom: 2px;
-        }
-        .robot-tagline {
-            color: #888;
-            font-size: 0.75em;
-        }
-        .robot-desc {
-            color: #555;
-            font-size: 0.7em;
-            margin-top: 6px;
-            line-height: 1.4;
-        }
-
-        /* --- Controls row --- */
-        .controls-row {
-            display: flex;
-            gap: 12px;
-            align-items: flex-end;
-            margin-bottom: 24px;
-        }
-        .control-group {
-            display: flex;
-            flex-direction: column;
-            gap: 4px;
-        }
-        .control-label {
-            color: #888;
-            font-size: 0.7em;
-            text-transform: uppercase;
-            letter-spacing: 0.5px;
-        }
-        select {
-            background: #1a1a1a;
-            color: #FF6200;
-            border: 1px solid #333;
-            padding: 8px 12px;
-            border-radius: 4px;
-            font-family: inherit;
-            cursor: pointer;
-            font-size: 0.85em;
-        }
-        select:hover { border-color: #FF6200; }
-
-        /* --- Feed --- */
-        .exchange {
-            background: #1a1a1a;
-            border: 1px solid #333;
-            border-radius: 8px;
-            padding: 15px;
-            margin-bottom: 15px;
-            transition: all 0.2s;
-        }
-        .exchange:hover {
-            border-color: #FF6200;
-            box-shadow: 0 0 15px rgba(255, 98, 0, 0.1);
-        }
-        .exchange-header {
-            display: flex;
-            justify-content: space-between;
-            margin-bottom: 10px;
-            padding-bottom: 8px;
-            border-bottom: 1px solid #2a2a2a;
-        }
-        .persona {
-            color: #FF6200;
-            font-weight: bold;
-        }
-        .language-pill {
-            display: inline-block;
-            background: #2a2a2a;
-            color: #6ab0f3;
-            padding: 2px 8px;
-            border-radius: 12px;
-            font-size: 0.75em;
-            margin-left: 8px;
-            font-weight: 600;
-        }
-        .timestamp {
-            color: #888;
-            font-size: 0.85em;
-        }
-        .content {
-            background: #0f0f0f;
-            padding: 15px;
-            border-left: 3px solid #333;
-            border-radius: 4px;
-            line-height: 1.6;
-        }
-        .transmission-label {
-            color: #4a9eff;
-            font-weight: bold;
-            margin-right: 5px;
-        }
-        .response-label {
-            color: #ff6b6b;
-            font-weight: bold;
-            margin-right: 5px;
-        }
-        .empty {
-            text-align: center;
-            padding: 60px 20px;
-            color: #666;
-            font-size: 1.2em;
-        }
-    </style>
-</head>
-<body>
-    <div class="header">
-        <select id="input-language-select" class="input-language-selector">
-            <option value="">Auto-detect</option>
-            <option value="en">English</option>
-            <option value="es">Español</option>
-            <option value="fr">Français</option>
-            <option value="de">Deutsch</option>
-        </select>
-        <select id="language-select" class="language-selector-top">
-            <option value="">Default</option>
-            <option value="en">English</option>
-            <option value="es">Español</option>
-            <option value="fr">Français</option>
-            <option value="de">Deutsch</option>
-        </select>
-        <h1>MEMO</h1>
-        <div class="subtitle">Founders, Inc. | Artifact 2026 Demo Day</div>
-        <div class="status" id="status">Connecting...</div>
-        <div class="update-message" id="update-msg"></div>
-    </div>
-
-    <div class="tabs">
-        <button class="tab active" onclick="switchTab('robots')">Robots</button>
-        <button class="tab" onclick="switchTab('agents')">Agents</button>
-    </div>
-
-    <div id="robots-tab" class="tab-content active">
-        <div class="section-label">Robots Grid</div>
-        <div class="robot-grid" id="robot-grid">
-            <!-- Populated by JS -->
-        </div>
-
-        <div class="controls-row" id="controls-row">
-            <div class="control-group" id="persona-control">
-                <label class="control-label">All Personas</label>
-                <select id="persona-select">
-                    <option>Loading...</option>
-                </select>
-            </div>
-        </div>
-
-        <div class="section-label">Feed</div>
-        <div id="feed"></div>
-    </div>
-
-    <div id="agents-tab" class="tab-content">
-        <div class="section-label">Agents Grid</div>
-        <div class="robot-grid" id="agent-grid">
-            <!-- Populated by JS -->
-        </div>
-
-        <div class="section-label" style="margin-top: 24px;">Feed</div>
-        <div id="feed-agents"></div>
-    </div>
-
-    <script>
-        let currentActive = '';
-        let currentPersona = '';
-        let currentLanguage = '';
-        let currentInputLanguage = '';
-        let allPersonas = [];
-        let identityMode = false;
-        let currentTab = 'robots';
-
-        function switchTab(tabName) {
-            currentTab = tabName;
-            document.querySelectorAll('.tab').forEach(tab => tab.classList.remove('active'));
-            event.target.classList.add('active');
-            document.querySelectorAll('.tab-content').forEach(content => content.classList.remove('active'));
-            document.getElementById(tabName + '-tab').classList.add('active');
-        }
-
-        async function loadConfig() {
-            try {
-                const [configResp, robotsResp, agentsResp] = await Promise.all([
-                    fetch('/api/config'),
-                    fetch('/api/robots').catch(() => ({ json: () => ({ robots: [] }) })),
-                    fetch('/api/agents').catch(() => ({ json: () => ({ agents: [] }) }))
-                ]);
-                const config = await configResp.json();
-                const robotsData = await robotsResp.json();
-                const agentsData = await agentsResp.json();
-                const robots = robotsData.robots || [];
-                const agents = agentsData.agents || [];
-
-                currentLanguage = config.language || config.response_language || '';
-                const langSelect = document.getElementById('language-select');
-                const langValues = Array.from(langSelect.options).map(o => o.value);
-                langSelect.value = langValues.includes(currentLanguage) ? currentLanguage : '';
-
-                currentInputLanguage = config.input_language || '';
-                const inputLangSelect = document.getElementById('input-language-select');
-                const inputLangValues = Array.from(inputLangSelect.options).map(o => o.value);
-                inputLangSelect.value = inputLangValues.includes(currentInputLanguage) ? currentInputLanguage : '';
-
-                const hasRobotsOrAgents = robots.length > 0 || agents.length > 0;
-                if (hasRobotsOrAgents) {
-                    identityMode = true;
-                    document.getElementById('persona-control').style.display = 'none';
-                    currentActive = (config.active && [].concat(
-                        robots.map(r => 'robots/' + r.id),
-                        agents.map(a => 'agents/' + a.id)
-                    ).includes(config.active)) ? config.active : (robots[0] ? 'robots/' + robots[0].id : agents[0] ? 'agents/' + agents[0].id : '');
-                    const robotGrid = document.getElementById('robot-grid');
-                    robotGrid.innerHTML = robots.map(r => {
-                        const activeVal = 'robots/' + r.id;
-                        return `<div class="robot-card" data-active="${activeVal}" onclick="selectIdentity('${activeVal.replace(/'/g, "\\'")}')">
-                            <div class="robot-name">${escapeHtml(r.name)}</div>
-                            <div class="robot-tagline">${escapeHtml(r.tagline || '')}</div>
-                            <div class="robot-desc">${escapeHtml(r.description || '')}</div>
-                        </div>`;
-                    }).join('');
-                    const agentGrid = document.getElementById('agent-grid');
-                    agentGrid.innerHTML = agents.map(a => {
-                        const activeVal = 'agents/' + a.id;
-                        return `<div class="robot-card" data-active="${activeVal}" onclick="selectIdentity('${activeVal.replace(/'/g, "\\'")}')">
-                            <div class="robot-name">${escapeHtml(a.name)}</div>
-                            <div class="robot-tagline">${escapeHtml(a.tagline || '')}</div>
-                            <div class="robot-desc">${escapeHtml(a.description || '')}</div>
-                        </div>`;
-                    }).join('');
-                    highlightActiveIdentity();
-                } else {
-                    identityMode = false;
-                    document.getElementById('persona-control').style.display = '';
-                    currentPersona = config.persona || '';
-                    const personasResp = await fetch('/api/personas');
-                    const personasData = await personasResp.json();
-                    allPersonas = personasData.personas || [];
-                    const demoRobots = allPersonas.filter(p => p.category === 'founders_demo');
-                    document.getElementById('robot-grid').innerHTML = demoRobots.map(r => `
-                        <div class="robot-card" data-id="${escapeHtml(r.id)}" onclick="selectRobot('${escapeHtml(r.id)}')">
-                            <div class="robot-name">${escapeHtml(r.name)}</div>
-                            <div class="robot-tagline">${escapeHtml(r.tagline || '')}</div>
-                            <div class="robot-desc">${escapeHtml(r.description || '')}</div>
-                        </div>
-                    `).join('');
-                    document.getElementById('agent-grid').innerHTML = '';
-                    const personaSelect = document.getElementById('persona-select');
-                    const personaOptions = allPersonas.map(p => `<option value="${escapeHtml(p.id)}">${escapeHtml(p.name)}</option>`).join('');
-                    personaSelect.innerHTML = personaOptions || '<option value="">— No personas —</option>';
-                    const hasCurrent = allPersonas.some(p => p.id === currentPersona);
-                    personaSelect.value = hasCurrent ? currentPersona : (allPersonas[0] ? allPersonas[0].id : '');
-                    if (!hasCurrent && currentPersona) currentPersona = personaSelect.value;
-                    highlightActiveRobot();
-                }
-
-                const personaSelect = document.getElementById('persona-select');
-                if (personaSelect && !identityMode) {
-                    personaSelect.replaceWith(personaSelect.cloneNode(true));
-                    document.getElementById('persona-select').addEventListener('change', async (e) => {
-                        await updateConfig({ persona: e.target.value });
-                    });
-                }
-            } catch (error) {
-                console.error('Failed to load config:', error);
-            }
-        }
-
-        function highlightActiveIdentity() {
-            document.querySelectorAll('#robot-grid .robot-card, #agent-grid .robot-card').forEach(card => {
-                card.classList.toggle('active', card.dataset.active === currentActive);
-            });
-        }
-
-        function highlightActiveRobot() {
-            document.querySelectorAll('.robot-card').forEach(card => {
-                if (card.dataset.id !== undefined)
-                    card.classList.toggle('active', card.dataset.id === currentPersona);
-            });
-            const personaSelect = document.getElementById('persona-select');
-            if (personaSelect) personaSelect.value = currentPersona;
-        }
-
-        async function selectIdentity(activeValue) {
-            await updateConfig({ active: activeValue });
-            currentActive = activeValue;
-            highlightActiveIdentity();
-        }
-
-        async function selectRobot(id) {
-            await updateConfig({ persona: id });
-            currentPersona = id;
-            highlightActiveRobot();
-        }
-
-        async function updateConfig(updates) {
-            try {
-                const response = await fetch('/api/config', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(updates)
-                });
-                const result = await response.json();
-                if (result.error) throw new Error(result.error);
-                const msg = document.getElementById('update-msg');
-                msg.textContent = result.message || 'Config updated. Restart agent to apply.';
-                msg.style.display = 'block';
-                setTimeout(() => { msg.style.display = 'none'; }, 5000);
-                if (updates.active) currentActive = updates.active;
-                if (updates.persona) currentPersona = updates.persona;
-                if (updates.language) currentLanguage = updates.language;
-                if (updates.input_language !== undefined) currentInputLanguage = updates.input_language;
-            } catch (error) {
-                console.error('Failed to update config:', error);
-                const msg = document.getElementById('update-msg');
-                msg.textContent = 'Update failed: ' + (error.message || error);
-                msg.style.display = 'block';
-            }
-        }
-
-        async function loadFeed() {
-            try {
-                const response = await fetch('/api/feed');
-                const data = await response.json();
-
-                document.getElementById('status').textContent =
-                    `Live | ${data.exchanges.length} exchanges`;
-                document.getElementById('status').className = 'status active';
-
-                if (data.exchanges.length === 0) {
-                    const emptyHtml = '<div class="empty">No transmissions yet. Speak into the radio...</div>';
-                    const feedElem = document.getElementById('feed');
-                    const feedAgentsElem = document.getElementById('feed-agents');
-                    if (feedElem) feedElem.innerHTML = emptyHtml;
-                    if (feedAgentsElem) feedAgentsElem.innerHTML = emptyHtml;
-                    return;
-                }
-
-                let html = '';
-                for (const ex of data.exchanges) {
-                    const date = new Date(ex.timestamp_ms);
-                    const time = date.toLocaleTimeString();
-
-                    const langMap = {en: 'EN', fr: 'FR', es: 'ES', de: 'DE'};
-                    const langCode = langMap[ex.language] || ex.language.toUpperCase();
-
-                    html += `
-                        <div class="exchange">
-                            <div class="exchange-header">
-                                <div>
-                                    <span class="persona">${ex.persona_name || 'Unknown'}</span>
-                                    <span class="language-pill">${langCode}</span>
-                                    <span class="location-badge">Fort Mason, Bldg C Floor 2N</span>
-                                </div>
-                                <span class="timestamp">${time}</span>
-                            </div>
-                            <div class="content">
-                                ${ex.transcript ? `
-                                    <div><span class="label transmission-label">&gt; </span>${escapeHtml(ex.transcript)}</div>
-                                ` : ''}
-                                ${ex.response ? `
-                                    <div style="margin-top: 10px;"><span class="label response-label">&lt; </span>${escapeHtml(ex.response)}</div>
-                                ` : ''}
-                            </div>
-                        </div>
-                    `;
-                }
-
-                const feedElem = document.getElementById('feed');
-                const feedAgentsElem = document.getElementById('feed-agents');
-                if (feedElem) feedElem.innerHTML = html;
-                if (feedAgentsElem) feedAgentsElem.innerHTML = html;
-            } catch (error) {
-                document.getElementById('status').textContent = 'Error: ' + error.message;
-                document.getElementById('status').className = 'status';
-            }
-        }
-
-        function escapeHtml(text) {
-            const div = document.createElement('div');
-            div.textContent = text;
-            return div.innerHTML;
-        }
-
-        document.getElementById('language-select').addEventListener('change', async (e) => {
-            await updateConfig({ language: e.target.value });
-        });
-        document.getElementById('input-language-select').addEventListener('change', async (e) => {
-            await updateConfig({ input_language: e.target.value });
-        });
-        loadConfig();
-        loadFeed();
-        setInterval(loadFeed, 2000);
-    </script>
-</body>
-</html>
-"""
 
 def scan_identity_dir(dir_path):
     """Scan a directory for *.json identity files; return list of { id, name, tagline, description }."""
@@ -619,6 +59,36 @@ def scan_identity_dir(dir_path):
     return out
 
 
+def load_simulated_feed():
+    """Read hotel_14day.csv and return list of { channel, timestamp, transmission_type, person_from, person_to, message, location, priority, ... }."""
+    if not CSV_PATH.is_file():
+        return []
+    out = []
+    with open(CSV_PATH, 'r', encoding='utf-8') as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+            dept = (row.get('department_from') or '').strip()
+            ch = DEPT_TO_CHANNEL.get(dept)
+            if ch is None:
+                continue
+            ts = (row.get('timestamp') or '').strip()
+            out.append({
+                'channel': ch,
+                'timestamp': ts,
+                'transmission_type': (row.get('transmission_type') or '').strip(),
+                'person_from': (row.get('person_from') or '').strip(),
+                'person_to': (row.get('person_to') or '').strip(),
+                'message': (row.get('message') or '').strip(),
+                'location': (row.get('location') or '').strip(),
+                'priority': (row.get('priority') or '').strip(),
+                'request_category': (row.get('request_category') or '').strip(),
+                'task_status': (row.get('task_status') or '').strip(),
+                'role_from': (row.get('role_from') or '').strip(),
+                'role_to': (row.get('role_to') or '').strip(),
+            })
+    return out
+
+
 class SimpleFeedHandler(BaseHTTPRequestHandler):
 
     def send_json(self, data, status=200):
@@ -627,6 +97,23 @@ class SimpleFeedHandler(BaseHTTPRequestHandler):
         self.send_header('Content-Type', 'application/json')
         self.end_headers()
         self.wfile.write(json.dumps(data).encode())
+
+    def send_file(self, filepath):
+        """Serve a file with appropriate Content-Type."""
+        try:
+            with open(filepath, 'rb') as f:
+                data = f.read()
+        except OSError:
+            self.send_response(404)
+            self.end_headers()
+            return
+        content_type, _ = mimetypes.guess_type(str(filepath))
+        content_type = content_type or 'application/octet-stream'
+        self.send_response(200)
+        self.send_header('Content-Type', content_type)
+        self.send_header('Content-Length', len(data))
+        self.end_headers()
+        self.wfile.write(data)
 
     def do_POST(self):
         """Handle POST requests"""
@@ -638,7 +125,7 @@ class SimpleFeedHandler(BaseHTTPRequestHandler):
 
                 # Load language_voices mapping
                 language_voices = {}
-                if Path(CONFIG_DIR / 'language_voices.json').exists():
+                if (CONFIG_DIR / 'language_voices.json').exists():
                     try:
                         with open(CONFIG_DIR / 'language_voices.json', 'r') as f:
                             language_voices = json.load(f)
@@ -664,12 +151,10 @@ class SimpleFeedHandler(BaseHTTPRequestHandler):
                                 with open(CONFIG_PATH, 'r') as f:
                                     config = json.load(f)
                                 voice_filename = language_voices[updates['language']]
-                                # Get the base voice models directory
                                 voice_models_dir = config.get('tts', {}).get('voice_models_dir', '/home/oliver/models/piper')
                                 if voice_models_dir:
                                     config['tts']['voice_path'] = str(Path(voice_models_dir) / voice_filename)
                                 else:
-                                    # Fallback: use absolute path construction
                                     config['tts']['voice_path'] = f"/home/oliver/models/piper/{voice_filename}"
                                 config['llm']['response_language'] = updates['language']
                                 with open(CONFIG_PATH, 'w') as f:
@@ -678,7 +163,6 @@ class SimpleFeedHandler(BaseHTTPRequestHandler):
                             except Exception as e:
                                 print(f"Warning: Failed to update voice path: {e}")
 
-                    # Handle input_language updates (STT language)
                     if 'input_language' in updates:
                         if CONFIG_PATH.exists():
                             try:
@@ -706,7 +190,6 @@ class SimpleFeedHandler(BaseHTTPRequestHandler):
                     if 'language' in updates:
                         config['llm']['response_language'] = updates['language']
 
-                        # Update voice path based on language
                         if updates['language'] in language_voices:
                             voice_filename = language_voices[updates['language']]
                             voice_models_dir = config.get('tts', {}).get('voice_models_dir', '/home/oliver/models/piper')
@@ -733,17 +216,14 @@ class SimpleFeedHandler(BaseHTTPRequestHandler):
                 body = self.rfile.read(length)
                 data = json.loads(body.decode('utf-8'))
 
-                # Debug output
-                print(f"[{data.get('event_type')}] Session: {data.get('session_id')} | {data.get('data')[:50]}...")
+                print(f"[{data.get('event_type')}] Session: {data.get('session_id')} | {data.get('data', '')[:50]}...")
 
-                # Add to memory
-                events.insert(0, data)  # Newest first
+                events.insert(0, data)
                 if len(events) > MAX_EVENTS:
-                    events.pop()  # Remove oldest
+                    events.pop()
 
                 print(f"Total events in memory: {len(events)}")
 
-                # Return OK
                 self.send_response(200)
                 self.send_header('Content-Type', 'application/json')
                 self.end_headers()
@@ -760,114 +240,150 @@ class SimpleFeedHandler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         """Handle GET requests"""
-        if self.path == '/' or self.path == '/index.html':
-            # Serve HTML UI
-            self.send_response(200)
-            self.send_header('Content-Type', 'text/html; charset=utf-8')
-            self.end_headers()
-            self.wfile.write(HTML.encode('utf-8'))
-        elif self.path == '/api/robots':
-            try:
-                robots = scan_identity_dir(ROBOTS_DIR)
-                self.send_json({'robots': robots})
-            except Exception as e:
-                self.send_json({'error': str(e)}, 500)
-        elif self.path == '/api/agents':
-            try:
-                agents = scan_identity_dir(AGENTS_DIR)
-                self.send_json({'agents': agents})
-            except Exception as e:
-                self.send_json({'error': str(e)}, 500)
-        elif self.path == '/api/personas':
-            try:
-                with open(PERSONAS_PATH, 'r') as f:
-                    personas_data = json.load(f)
-                personas_list = [
-                    {
-                        'id': k,
-                        'name': v['name'],
-                        'category': v.get('category', ''),
-                        'tagline': v.get('tagline', ''),
-                        'description': v.get('description', ''),
-                    }
-                    for k, v in personas_data.items()
-                ]
-                self.send_json({'personas': personas_list})
-            except Exception as e:
-                self.send_json({'error': str(e)}, 500)
-        elif self.path == '/api/config':
-            try:
-                # Always read main config for input_language
-                input_lang = ''
-                if CONFIG_PATH.exists():
-                    with open(CONFIG_PATH, 'r') as f:
-                        config_data = json.load(f)
-                    input_lang = config_data.get('stt', {}).get('language', '')
+        path = self.path.split('?')[0]
 
-                if ACTIVE_PATH.exists():
-                    with open(ACTIVE_PATH, 'r') as f:
-                        active_data = json.load(f)
-                    self.send_json({
-                        'active': active_data.get('active', ''),
-                        'language': active_data.get('response_language', ''),
-                        'response_language': active_data.get('response_language', ''),
-                        'input_language': input_lang,
-                    })
-                else:
-                    with open(CONFIG_PATH, 'r') as f:
-                        config = json.load(f)
-                    self.send_json({
-                        'persona': config.get('llm', {}).get('agent_persona', ''),
-                        'language': config.get('llm', {}).get('response_language', ''),
-                        'input_language': input_lang,
-                    })
-            except Exception as e:
-                self.send_json({'error': str(e)}, 500)
-        elif self.path == '/api/feed':
-            # Build exchanges by pairing transcripts with responses
-            # Events are stored newest first, so reverse to process in order
-            exchanges = []
-            pending_response = None
+        if path == '/' or path == '/index.html':
+            # Serve dashboard SPA entry
+            index_path = DASHBOARD_DIR / 'index.html'
+            if index_path.is_file():
+                self.send_file(index_path)
+            else:
+                self.send_response(404)
+                self.send_header('Content-Type', 'text/plain')
+                self.end_headers()
+                self.wfile.write(b'Dashboard not built. Run: cd frontend && npm run build')
+            return
 
-            # Process oldest to newest to pair correctly
-            for event in reversed(events):
-                event_type = event.get('event_type')
+        if path.startswith('/api/'):
+            # API routes
+            if path == '/api/robots':
+                try:
+                    robots = scan_identity_dir(ROBOTS_DIR)
+                    self.send_json({'robots': robots})
+                except Exception as e:
+                    self.send_json({'error': str(e)}, 500)
+                return
+            if path == '/api/agents':
+                try:
+                    agents = scan_identity_dir(AGENTS_DIR)
+                    self.send_json({'agents': agents})
+                except Exception as e:
+                    self.send_json({'error': str(e)}, 500)
+                return
+            if path == '/api/personas':
+                try:
+                    with open(PERSONAS_PATH, 'r') as f:
+                        personas_data = json.load(f)
+                    personas_list = [
+                        {
+                            'id': k,
+                            'name': v['name'],
+                            'category': v.get('category', ''),
+                            'tagline': v.get('tagline', ''),
+                            'description': v.get('description', ''),
+                        }
+                        for k, v in personas_data.items()
+                    ]
+                    self.send_json({'personas': personas_list})
+                except Exception as e:
+                    self.send_json({'error': str(e)}, 500)
+                return
+            if path == '/api/config':
+                try:
+                    input_lang = ''
+                    if CONFIG_PATH.exists():
+                        with open(CONFIG_PATH, 'r') as f:
+                            config_data = json.load(f)
+                        input_lang = config_data.get('stt', {}).get('language', '')
 
-                if event_type == 'transcript':
-                    # Create new exchange with transcript
-                    exchange = {
-                        'session_id': event.get('session_id', 'unknown'),
-                        'timestamp_ms': event.get('timestamp_ms', 0),
-                        'transcript': event.get('data', ''),
-                        'response': '',
-                        'persona_name': event.get('persona_name', 'Unknown'),
-                        'language': event.get('language', 'en')
-                    }
-                    exchanges.append(exchange)
+                    if ACTIVE_PATH.exists():
+                        with open(ACTIVE_PATH, 'r') as f:
+                            active_data = json.load(f)
+                        self.send_json({
+                            'active': active_data.get('active', ''),
+                            'language': active_data.get('response_language', ''),
+                            'response_language': active_data.get('response_language', ''),
+                            'input_language': input_lang,
+                        })
+                    else:
+                        with open(CONFIG_PATH, 'r') as f:
+                            config = json.load(f)
+                        self.send_json({
+                            'persona': config.get('llm', {}).get('agent_persona', ''),
+                            'language': config.get('llm', {}).get('response_language', ''),
+                            'input_language': input_lang,
+                        })
+                except Exception as e:
+                    self.send_json({'error': str(e)}, 500)
+                return
+            if path == '/api/feed':
+                exchanges = []
+                for event in reversed(events):
+                    event_type = event.get('event_type')
 
-                elif event_type == 'llm_response':
-                    # Find the most recent exchange without a response and add it
-                    for ex in reversed(exchanges):
-                        if not ex['response']:
-                            ex['response'] = event.get('data', '')
-                            break
+                    if event_type == 'transcript':
+                        exchange = {
+                            'session_id': event.get('session_id', 'unknown'),
+                            'timestamp_ms': event.get('timestamp_ms', 0),
+                            'transcript': event.get('data', ''),
+                            'response': '',
+                            'persona_name': event.get('persona_name', 'Unknown'),
+                            'language': event.get('language', 'en')
+                        }
+                        exchanges.append(exchange)
 
-            # Reverse to show newest first
-            exchanges.reverse()
+                    elif event_type == 'llm_response':
+                        for ex in reversed(exchanges):
+                            if not ex['response']:
+                                ex['response'] = event.get('data', '')
+                                break
 
-            response_data = json.dumps({'exchanges': exchanges})
+                exchanges.reverse()
+                self.send_json({'exchanges': exchanges})
+                return
+            if path == '/api/simulated/feed':
+                try:
+                    items = load_simulated_feed()
+                    self.send_json({'items': items})
+                except Exception as e:
+                    self.send_json({'error': str(e)}, 500)
+                return
 
-            self.send_response(200)
-            self.send_header('Content-Type', 'application/json')
-            self.end_headers()
-            self.wfile.write(response_data.encode())
-        else:
             self.send_response(404)
             self.end_headers()
+            return
+
+        # Static file: resolve under DASHBOARD_DIR
+        if not DASHBOARD_DIR.is_dir():
+            self.send_response(404)
+            self.end_headers()
+            return
+        # Strip leading slash and resolve (no path traversal)
+        rel = path.lstrip('/')
+        if '..' in rel or rel.startswith('/'):
+            self.send_response(404)
+            self.end_headers()
+            return
+        filepath = (DASHBOARD_DIR / rel).resolve()
+        if not str(filepath).startswith(str(DASHBOARD_DIR.resolve())):
+            self.send_response(404)
+            self.end_headers()
+            return
+        if filepath.is_file():
+            self.send_file(filepath)
+        else:
+            # SPA fallback: serve index.html for client-side routes
+            index_path = DASHBOARD_DIR / 'index.html'
+            if index_path.is_file():
+                self.send_file(index_path)
+            else:
+                self.send_response(404)
+                self.end_headers()
 
     def log_message(self, format, *args):
         """Suppress request logging"""
         pass
+
 
 if __name__ == '__main__':
     port = 5050
@@ -875,8 +391,10 @@ if __name__ == '__main__':
     print(f"\n{'='*60}")
     print(f"Simple Feed Server running on port {port}")
     print(f"{'='*60}")
-    print(f"Open in browser: http://localhost:{port}")
-    print(f"API endpoint:    http://localhost:{port}/api/feed/notify")
+    print(f"Dashboard:  http://localhost:{port}")
+    print(f"API:       http://localhost:{port}/api/feed/notify")
+    if not DASHBOARD_DIR.is_dir():
+        print(f"Note:      Build dashboard first: cd frontend && npm run build")
     print(f"{'='*60}\n")
     try:
         server.serve_forever()
