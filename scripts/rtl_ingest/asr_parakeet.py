@@ -1,38 +1,23 @@
 #!/usr/bin/env python3
 """
-NVIDIA Parakeet 0.6B ASR via NeMo. Accepts 16 kHz mono float audio, returns transcript text.
+NVIDIA Parakeet ASR: NeMo when available, Hugging Face Transformers fallback on Jetson.
+Accepts 16 kHz mono float audio, returns transcript text.
 """
 
 import numpy as np
 import tempfile
 import os
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Any
 
 AUDIO_RATE = 16000
 
-
-def _patch_torch_distributed_for_nemo() -> None:
-    """
-    Jetson PyTorch wheels (and some minimal builds) do not expose GradBucket in
-    torch.distributed, which NeMo imports for DDP hooks. We only need ASR inference,
-    so stub GradBucket so the import chain succeeds.
-    """
-    import torch.distributed as dist
-    if getattr(dist, "GradBucket", None) is not None:
-        return
-    try:
-        from torch._C._distributed_c10d import GradBucket as _GradBucket
-        dist.GradBucket = _GradBucket
-        return
-    except Exception:
-        pass
-    # Minimal stub so NeMo's debugging_hooks import succeeds; unused at inference time.
-    class _GradBucketStub:
-        def __init__(self, *args, **kwargs): pass
-        def index(self): return 0
-        def buffer(self): return None
-    dist.GradBucket = _GradBucketStub
+# On Jetson, NeMo imports torch.distributed which isn't in the slim PyTorch wheel.
+# Map to HF Parakeet CTC model (same 0.6b size; no NeMo/torch.distributed).
+HF_MODEL_MAP = {
+    "nvidia/parakeet-rnnt-0.6b": "nvidia/parakeet-ctc-0.6b",
+    "nvidia/parakeet-rnnt-1.1b": "nvidia/parakeet-ctc-1.1b",
+}
 
 
 def _float_to_wav_bytes(audio: np.ndarray, rate: int = AUDIO_RATE) -> bytes:
@@ -49,42 +34,65 @@ def _float_to_wav_bytes(audio: np.ndarray, rate: int = AUDIO_RATE) -> bytes:
     return buf.getvalue()
 
 
+def _load_nemo(model_name: str, device: str) -> Any:
+    """Load Parakeet via NeMo. Raises on failure (e.g. Jetson slim torch)."""
+    import nemo.collections.asr as nemo_asr
+    if "rnnt" in model_name.lower():
+        model = nemo_asr.models.EncDecRNNTBPEModel.from_pretrained(model_name)
+    else:
+        model = nemo_asr.models.ASRModel.from_pretrained(model_name)
+    if device == "cuda":
+        model = model.cuda()
+    else:
+        model = model.cpu()
+    return ("nemo", model)
+
+
+def _load_hf(model_name: str, device: str) -> Any:
+    """Load Parakeet via Hugging Face Transformers (no NeMo, works on Jetson)."""
+    from transformers import AutoModelForCTC, AutoProcessor
+    hf_model = HF_MODEL_MAP.get(model_name, model_name)
+    if "rnnt" in hf_model.lower():
+        hf_model = HF_MODEL_MAP.get("nvidia/parakeet-rnnt-0.6b", "nvidia/parakeet-ctc-0.6b")
+    processor = AutoProcessor.from_pretrained(hf_model)
+    model = AutoModelForCTC.from_pretrained(hf_model)
+    if device == "cuda":
+        model = model.cuda()
+    else:
+        model = model.cpu()
+    return ("hf", (processor, model))
+
+
 class ParakeetASR:
     """
-    Loads NeMo Parakeet (e.g. parakeet-rnnt-0.6b), transcribes 16 kHz mono audio.
+    Parakeet ASR: uses NeMo on full PyTorch, or Hugging Face Transformers on Jetson
+    (where the PyTorch wheel has no torch.distributed).
     """
 
     def __init__(self, model_name: str = "nvidia/parakeet-rnnt-0.6b", device: str = "cuda"):
         self.model_name = model_name
         self.device = device
-        self._model = None
+        self._backend: Optional[str] = None
+        self._model: Any = None
 
     def load(self) -> None:
-        _patch_torch_distributed_for_nemo()
+        # Prefer NeMo; on Jetson it often fails (slim torch has no torch._C._distributed_c10d).
         try:
-            import nemo.collections.asr as nemo_asr
-        except ImportError:
+            self._backend, self._model = _load_nemo(self.model_name, self.device)
+            return
+        except Exception:
+            pass
+        # Fallback: Hugging Face Parakeet CTC (no NeMo, no torch.distributed).
+        try:
+            self._backend, self._model = _load_hf(self.model_name, self.device)
+            return
+        except ImportError as e:
             raise ImportError(
-                "NeMo ASR required: pip install nemo_toolkit[asr] (or nemo_toolkit['all'])"
-            )
-        # RNNT model uses EncDecRNNTBPEModel
-        if "rnnt" in self.model_name.lower():
-            self._model = nemo_asr.models.EncDecRNNTBPEModel.from_pretrained(
-                self.model_name
-            )
-        else:
-            # CTC or TDT: use generic ASRModel
-            self._model = nemo_asr.models.ASRModel.from_pretrained(self.model_name)
-        if self.device == "cuda":
-            self._model = self._model.cuda()
-        else:
-            self._model = self._model.cpu()
+                "NeMo failed (e.g. Jetson slim PyTorch). Fallback needs: pip install transformers"
+            ) from e
+        raise RuntimeError("NeMo and Hugging Face Parakeet fallback both failed.")
 
     def transcribe(self, audio: np.ndarray, sample_rate: int = AUDIO_RATE) -> str:
-        """
-        Transcribe one segment. audio: float32 mono at 16 kHz (or resampled internally if not).
-        Returns transcript text (strip/empty if nothing).
-        """
         if self._model is None:
             self.load()
         if sample_rate != AUDIO_RATE:
@@ -93,17 +101,33 @@ class ParakeetASR:
             audio = signal.resample(audio, num).astype(np.float32)
         if len(audio) == 0:
             return ""
-        with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as f:
-            f.write(_float_to_wav_bytes(audio, AUDIO_RATE))
-            path = f.name
-        try:
-            hypotheses = self._model.transcribe([path])
-            if hypotheses and len(hypotheses) > 0:
-                text = getattr(hypotheses[0], "text", None) or str(hypotheses[0])
-                return (text or "").strip()
-            return ""
-        finally:
+
+        if self._backend == "nemo":
+            with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as f:
+                f.write(_float_to_wav_bytes(audio, AUDIO_RATE))
+                path = f.name
             try:
-                os.unlink(path)
-            except Exception:
-                pass
+                hypotheses = self._model.transcribe([path])
+                if hypotheses and len(hypotheses) > 0:
+                    text = getattr(hypotheses[0], "text", None) or str(hypotheses[0])
+                    return (text or "").strip()
+                return ""
+            finally:
+                try:
+                    os.unlink(path)
+                except Exception:
+                    pass
+
+        # Hugging Face
+        processor, model = self._model
+        inputs = processor(
+            [audio],
+            sampling_rate=AUDIO_RATE,
+            return_tensors="pt",
+            padding=True,
+        )
+        inputs = inputs.to(model.device)
+        with np.errstate(divide="ignore", invalid="ignore"):
+            outputs = model.generate(**inputs)
+        text = processor.batch_decode(outputs, skip_special_tokens=True)
+        return (text[0].strip() if text else "")
