@@ -12,12 +12,8 @@ from typing import Optional, Any
 
 AUDIO_RATE = 16000
 
-# On Jetson, NeMo imports torch.distributed which isn't in the slim PyTorch wheel.
-# Map to HF Parakeet CTC model (same 0.6b size; no NeMo/torch.distributed).
-HF_MODEL_MAP = {
-    "nvidia/parakeet-rnnt-0.6b": "nvidia/parakeet-ctc-0.6b",
-    "nvidia/parakeet-rnnt-1.1b": "nvidia/parakeet-ctc-1.1b",
-}
+# On Jetson we use HF Parakeet CTC (no NeMo). Use 1.1b: 0.6b repo lacks processor_config.json.
+HF_FALLBACK_MODEL = "nvidia/parakeet-ctc-1.1b"
 
 
 def _float_to_wav_bytes(audio: np.ndarray, rate: int = AUDIO_RATE) -> bytes:
@@ -48,14 +44,23 @@ def _load_nemo(model_name: str, device: str) -> Any:
     return ("nemo", model)
 
 
+def _ensure_hf_cache_writable() -> None:
+    """Use a writable HF cache (avoid /mnt/nvme/cache or other read-only paths)."""
+    home_cache = os.path.join(os.path.expanduser("~"), ".cache", "huggingface")
+    for key in ("HF_HOME", "TRANSFORMERS_CACHE"):
+        val = os.environ.get(key)
+        if val and not (os.path.isdir(val) and os.access(val, os.W_OK)):
+            os.environ[key] = home_cache
+    os.environ.setdefault("HF_HOME", home_cache)
+    os.environ.setdefault("TRANSFORMERS_CACHE", home_cache)
+
+
 def _load_hf(model_name: str, device: str) -> Any:
     """Load Parakeet via Hugging Face Transformers (no NeMo, works on Jetson)."""
     from transformers import AutoModelForCTC, AutoProcessor
-    hf_model = HF_MODEL_MAP.get(model_name, model_name)
-    if "rnnt" in hf_model.lower():
-        hf_model = HF_MODEL_MAP.get("nvidia/parakeet-rnnt-0.6b", "nvidia/parakeet-ctc-0.6b")
-    processor = AutoProcessor.from_pretrained(hf_model)
-    model = AutoModelForCTC.from_pretrained(hf_model)
+    _ensure_hf_cache_writable()
+    processor = AutoProcessor.from_pretrained(HF_FALLBACK_MODEL)
+    model = AutoModelForCTC.from_pretrained(HF_FALLBACK_MODEL)
     if device == "cuda":
         model = model.cuda()
     else:
