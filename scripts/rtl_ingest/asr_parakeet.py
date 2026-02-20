@@ -12,6 +12,29 @@ from typing import Optional
 AUDIO_RATE = 16000
 
 
+def _patch_torch_distributed_for_nemo() -> None:
+    """
+    Jetson PyTorch wheels (and some minimal builds) do not expose GradBucket in
+    torch.distributed, which NeMo imports for DDP hooks. We only need ASR inference,
+    so stub GradBucket so the import chain succeeds.
+    """
+    import torch.distributed as dist
+    if getattr(dist, "GradBucket", None) is not None:
+        return
+    try:
+        from torch._C._distributed_c10d import GradBucket as _GradBucket
+        dist.GradBucket = _GradBucket
+        return
+    except Exception:
+        pass
+    # Minimal stub so NeMo's debugging_hooks import succeeds; unused at inference time.
+    class _GradBucketStub:
+        def __init__(self, *args, **kwargs): pass
+        def index(self): return 0
+        def buffer(self): return None
+    dist.GradBucket = _GradBucketStub
+
+
 def _float_to_wav_bytes(audio: np.ndarray, rate: int = AUDIO_RATE) -> bytes:
     """Convert float32 [-1,1] to 16-bit PCM WAV bytes."""
     import wave
@@ -37,6 +60,7 @@ class ParakeetASR:
         self._model = None
 
     def load(self) -> None:
+        _patch_torch_distributed_for_nemo()
         try:
             import nemo.collections.asr as nemo_asr
         except ImportError:

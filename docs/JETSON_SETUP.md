@@ -245,10 +245,10 @@ Pick the wheel that matches your **JetPack** and **Python** from the [NVIDIA com
 - JetPack 6.0 → `v60` (or `v60dp` for developer preview), 6.1 → `v61`, 6.2 → `v62`, 5.1.x → `v51`, etc.
 - Wheel filename includes Python tag, e.g. `cp310` (Python 3.10) or `cp38` (Python 3.8).
 
-Example for **JetPack 6.0 Developer Preview, Python 3.10** (from the matrix):
+Example for **JetPack 6.0, Python 3.10** (PyTorch 2.4.x; use v60 so NeMo’s `torch.distributed` imports work; v60dp 2.3 is too old):
 
 ```bash
-export TORCH_INSTALL="https://developer.download.nvidia.com/compute/redist/jp/v60dp/pytorch/torch-2.3.0a0+40ec155e58.nv24.03.13384722-cp310-cp310-linux_aarch64.whl"
+export TORCH_INSTALL="https://developer.download.nvidia.com/compute/redist/jp/v60/pytorch/torch-2.4.0a0+3bcc3cddb5.nv24.07.16234504-cp310-cp310-linux_aarch64.whl"
 python3 -m pip install --upgrade pip
 python3 -m pip install "numpy>=1.20,<2"
 python3 -m pip install --no-cache-dir "$TORCH_INSTALL"
