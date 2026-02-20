@@ -24,7 +24,7 @@ Separate pipeline from memo-RF: one RTL-SDR wideband capture, 7-channel software
 - `center_freq_mhz`, `sample_rate`, `frequencies_mhz`: 7 frequencies in MHz (same order as UV-5R memory 1–7).
 - `feed_server_url`: where to POST transcripts (default `http://localhost:5050/api/feed/notify`).
 - `parakeet_model`: e.g. `nvidia/parakeet-rnnt-0.6b`.
-- `device`: `cuda` or `cpu` for Parakeet.
+- `device`: `cuda` or `cpu` for Parakeet. On Jetson, use `cuda` only after installing [NVIDIA’s PyTorch wheel for JetPack](https://docs.nvidia.com/deeplearning/frameworks/install-pytorch-jetson-platform/index.html) (see `docs/JETSON_SETUP.md` → “PyTorch with CUDA for RTL ingest”).
 - `vad`: optional `threshold`, `min_speech_ms`, `end_silence_ms`, `frame_duration_ms`.
 
 ## Flow

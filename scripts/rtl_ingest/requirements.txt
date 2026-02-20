@@ -1,5 +1,8 @@
 # RTL ingest: 7-channel RTL-SDR -> Parakeet ASR -> feed
+# Pin numpy<2 to avoid ABI break with system matplotlib and NeMo stack on Linux/Jetson
+numpy>=1.20,<2
+# On Jetson (aarch64 Linux), pin NVIDIA CUDA wheel so pip does not replace it with CPU-only PyPI torch
+torch @ https://developer.download.nvidia.com/compute/redist/jp/v60dp/pytorch/torch-2.3.0a0+40ec155e58.nv24.03.13384722-cp310-cp310-linux_aarch64.whl ; sys_platform == 'linux' and platform_machine == 'aarch64'
 pyrtlsdr>=0.2.93
-numpy>=1.20
 scipy>=1.7
 nemo_toolkit[asr]>=1.20.0

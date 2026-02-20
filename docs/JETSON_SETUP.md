@@ -196,8 +196,87 @@ cd build
 If you use the **RTL-SDR 7-channel ingest** (`scripts/run_rtl_ingest.py`):
 
 - **RTL-SDR on Linux/Jetson:** Install `sudo apt-get install -y rtl-sdr librtlsdr-dev`. Blacklist the DVB driver: `echo 'blacklist dvb_usb_rtl28xxu' | sudo tee /etc/modprobe.d/blacklist-rtl.conf`, then reload. Add udev rules so the device is accessible without root (see [rtl-sdr repo](https://github.com/osmocom/rtl-sdr)); replug the dongle and optionally run `rtl_test -t`.
-- **Python deps:** `pip install -r scripts/rtl_ingest/requirements.txt`. On Jetson, NeMo may need a Jetson-compatible PyTorch first; use `"device": "cuda"` in `config/rtl_ingest.json` for Parakeet on GPU.
+- **Python deps:** `pip install -r scripts/rtl_ingest/requirements.txt`. On Jetson, **Parakeet needs PyTorch built with CUDA**; see **PyTorch with CUDA for RTL ingest** below.
 - **Config:** Edit `config/rtl_ingest.json` with your 7 frequencies and `feed_server_url` if needed.
+
+### PyTorch with CUDA for RTL ingest (Parakeet on GPU)
+
+`pip install torch` (and the torch pulled in by `nemo_toolkit[asr]`) is **CPU-only** on Jetson. To run Parakeet on GPU you must install **NVIDIA’s PyTorch wheel** for your JetPack so that `torch.cuda.is_available()` is true.
+
+**1. Check JetPack and Python**
+
+```bash
+# JetPack version (e.g. 6.0, 6.1, 6.2)
+cat /etc/nv_tegra_release
+# or: dpkg -l | grep nvidia-jetpack
+
+# Python version (e.g. 3.10 -> cp310, 3.8 -> cp38)
+python3 --version
+```
+
+**2. System packages**
+
+```bash
+sudo apt-get -y update
+sudo apt-get install -y python3-pip libopenblas-dev
+```
+
+**3. (Optional) cuSPARSELt for PyTorch 24.06+**
+
+If you install a PyTorch wheel from 24.06 or later:
+
+```bash
+wget https://raw.githubusercontent.com/pytorch/pytorch/5c6af2b583709f6176898c017424dc9981023c28/.ci/docker/common/install_cusparselt.sh
+export CUDA_VERSION=12.1
+bash ./install_cusparselt.sh
+```
+
+**4. Uninstall current (CPU) PyTorch**
+
+```bash
+pip3 uninstall -y torch
+```
+
+**5. Install NVIDIA’s PyTorch wheel for your JetPack**
+
+Pick the wheel that matches your **JetPack** and **Python** from the [NVIDIA compatibility matrix](https://docs.nvidia.com/deeplearning/frameworks/install-pytorch-jetson-platform-release-notes/pytorch-jetson-rel.html). Wheel base URL pattern:
+
+- `https://developer.download.nvidia.com/compute/redist/jp/v<JP>/pytorch/<wheel_file>`
+- JetPack 6.0 → `v60` (or `v60dp` for developer preview), 6.1 → `v61`, 6.2 → `v62`, 5.1.x → `v51`, etc.
+- Wheel filename includes Python tag, e.g. `cp310` (Python 3.10) or `cp38` (Python 3.8).
+
+Example for **JetPack 6.0 Developer Preview, Python 3.10** (from the matrix):
+
+```bash
+export TORCH_INSTALL="https://developer.download.nvidia.com/compute/redist/jp/v60dp/pytorch/torch-2.3.0a0+40ec155e58.nv24.03.13384722-cp310-cp310-linux_aarch64.whl"
+python3 -m pip install --upgrade pip
+python3 -m pip install "numpy>=1.20,<2"
+python3 -m pip install --no-cache-dir "$TORCH_INSTALL"
+```
+
+For **JetPack 6.1 / 6.2** and other versions, use the exact wheel URL from the [compatibility table](https://docs.nvidia.com/deeplearning/frameworks/install-pytorch-jetson-platform-release-notes/pytorch-jetson-rel.html) (column “NVIDIA Framework Wheel”) for your JP version.
+
+**6. Reinstall NeMo / RTL ingest deps**
+
+So NeMo uses the new CUDA-enabled torch:
+
+```bash
+pip3 install -r scripts/rtl_ingest/requirements.txt
+```
+
+**7. Verify CUDA in Python**
+
+```bash
+python3 -c "import torch; print('CUDA:', torch.cuda.is_available())"
+```
+
+You should see `CUDA: True`. Then set `"device": "cuda"` in `config/rtl_ingest.json` and run:
+
+```bash
+python3 scripts/run_rtl_ingest.py
+```
+
+Parakeet will run on the Jetson GPU; no code changes needed beyond using the correct PyTorch wheel.
 
 ---
 
