@@ -75,16 +75,17 @@ make
 
 ### Linux / Jetson Orin Nano
 
-On Ubuntu or Jetson (aarch64):
+**Minimal (first time):** Run `./scripts/setup_jetson.sh` once to install apt deps. Build whisper.cpp (see **docs/JETSON_SETUP.md**; use `./scripts/build_whisper_jetson_cuda.sh` for CUDA on Jetson). Then `export WHISPER_DIR=/path/to/whisper.cpp && ./build.sh`, set up `config/config.json`, and run. **After each git pull:** `./build.sh` then run.
 
-1. Install system deps: `sudo apt-get install -y build-essential libportaudio2 portaudio19-dev libcurl4-openssl-dev pkg-config`
-2. Install nlohmann/json: `sudo apt-get install -y nlohmann-json3-dev` or place `json.hpp` in `third_party/nlohmann/`
-3. Build whisper.cpp (and optionally llama.cpp) for your platform; for CUDA on Jetson Orin Nano see **docs/JETSON_SETUP.md** (CUDA section).
-4. Build memo-RF: `./build.sh` or `mkdir build && cd build && cmake -DWHISPER_DIR=/path/to/whisper.cpp .. && make`
-5. Install Piper (see `docs/INSTALL_MODELS.md`); set `tts.voice_path` and optionally `tts.piper_path` / `tts.espeak_data_path` in config
-6. Copy `config/config.json.example` to `config/config.json` and set `stt.model_path`, `tts.voice_path`, `llm.endpoint`
+Detailed steps:
 
-See `docs/JETSON_SETUP.md` for a concise Jetson setup and transfer steps.
+1. Install system deps: `./scripts/setup_jetson.sh` or `sudo apt-get install -y build-essential libportaudio2 portaudio19-dev libcurl4-openssl-dev pkg-config nlohmann-json3-dev`
+2. Build whisper.cpp (and optionally llama.cpp) for your platform; for CUDA on Jetson Orin Nano see **docs/JETSON_SETUP.md** (CUDA section).
+3. Build memo-RF: `export WHISPER_DIR=/path/to/whisper.cpp && ./build.sh`
+4. Install Piper (see `docs/INSTALL_MODELS.md`); set `tts.voice_path` and optionally `tts.piper_path` in config
+5. Copy `config/config.json.example` to `config/config.json` and set `stt.model_path`, `tts.voice_path`, `llm.endpoint`
+
+See `docs/JETSON_SETUP.md` for the full Jetson guide and transfer steps.
 
 ### Config load order (when using identity layout)
 
@@ -247,12 +248,19 @@ You can also run the feed server independently. For the **demo dashboard** (Reac
    python3 scripts/simple_feed.py
    ```
 
-3. Open http://localhost:5050 in a browser. The **Demo** channel shows live transmissions from the memo-rf agent (when it posts to `/api/feed/notify`); channels CH1–CH7 show simulated data from `hotel_14day.csv`.
+3. Open http://localhost:5050 in a browser. The **Demo** channel shows live transmissions from the memo-rf agent (when it posts to `/api/feed/notify`); channels CH1–CH7 show simulated data from `data/hotel_14day.csv`.
 
-To run the legacy feed server instead:
+### RTL-SDR 7-channel ingest (optional)
+
+A separate pipeline can ingest audio from 7 RF channels (e.g. Baofeng UV-5R programmable channels) via one RTL-SDR, transcribe with NVIDIA Parakeet 0.6B, and POST to the feed with a channel id. See `scripts/rtl_ingest/README.md`. Quick start:
+
 ```bash
-python3 scripts/feed_server.py [--port PORT] [--host HOST] [--sessions-dir DIR]
+pip install -r scripts/rtl_ingest/requirements.txt
+# Edit config/rtl_ingest.json with your 7 frequencies (same as UV-5R memory 1–7)
+python scripts/run_rtl_ingest.py
 ```
+
+Live transcripts from the RTL ingest appear on the Demo feed with a CH1–CH7 badge.
 
 ### Accessing from Remote Device
 
@@ -326,16 +334,20 @@ Pre-configured fast responses (no LLM):
 
 ## Documentation
 
-Additional documentation is available in the `docs/` folder:
-- `ARCHITECTURE.md` - System architecture details
-- `WAKE_WORD.md` - Wake word ("hey memo"), continual STT, and half-duplex channel clear
-- `INSTALL_MODELS.md` - Model installation guide
-- `VOICE_CONFIG.md` - Voice configuration options
-- `QUICKSTART.md` - Quick start guide
-- `JETSON_SETUP.md` - Linux / Jetson Orin Nano setup and transfer
-- `NEXT_STEPS.md` - Future development plans
-- `RUNNING.md` - Running with agentic tools (Ollama, tools.enabled, troubleshooting)
-- `RUN_AS_SERVICE.md` - Run as a systemd user service (survive closing terminal / Jetson session)
+Additional documentation is in `docs/`:
+- `docs/ARCHITECTURE.md` - System architecture details
+- `docs/WAKE_WORD.md` - Wake word ("hey memo"), continual STT, and half-duplex channel clear
+- `docs/INSTALL_MODELS.md` - Model installation guide
+- `docs/VOICE_CONFIG.md` - Voice configuration options
+- `docs/QUICKSTART.md` - Quick start guide
+- `docs/QUICK_START.md` - Translation and dynamic persona switching
+- `docs/JETSON_SETUP.md` - Linux / Jetson Orin Nano setup and transfer
+- `docs/NEXT_STEPS.md` - Future development plans
+- `docs/RUNNING.md` - Running with agentic tools (Ollama, tools.enabled, troubleshooting)
+- `docs/RUN_AS_SERVICE.md` - Run as a systemd user service (survive closing terminal / Jetson session)
+- `docs/PERSONA_SWITCHING.md` - Dynamic persona switching and translation config
+- `docs/RADIO_TEST_GUIDE.md` - Testing the plugin system with radio (mock API)
+- `docs/TEST_RESULTS.md` - Plugin system test results
 
 ## License
 

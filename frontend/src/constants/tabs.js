@@ -1,4 +1,5 @@
 export const TABS = [
+  { id: 'home', label: 'Home', icon: '⌂' },
   { id: 'live', label: 'Live Overview', icon: '◉' },
   { id: 'channels', label: 'Channel Detail', icon: '▥' },
   { id: 'stress', label: 'Stress Map', icon: '△' },

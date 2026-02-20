@@ -1,8 +1,12 @@
 #!/bin/bash
-# Start the mock Muni API server and memo-rf for testing
+# Start the mock Muni API server for testing. Run from repo root: ./scripts/start_mock_test.sh
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+cd "$REPO_ROOT"
 
 echo "Starting Mock Muni API Server on port 4890..."
-python3 test_muni_api.py &
+python3 scripts/test_muni_api.py &
 MOCK_PID=$!
 
 # Wait for server to start

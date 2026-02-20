@@ -22,7 +22,7 @@
 
 - **Plugin Config**: `config/plugins/muni_test.json`
 - **API Endpoint**: `http://localhost:4890`
-- **Mock Server**: Python HTTP server simulating Muni rover API
+- **Mock Server**: Python HTTP server simulating Muni rover API (`scripts/test_muni_api.py`)
 - **Test Program**: `test_plugin.cpp` (standalone unit test)
 
 ---

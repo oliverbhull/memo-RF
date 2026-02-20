@@ -35,16 +35,11 @@ The system determines the agent is ready when:
 
 ## Enabling Auto-Restart
 
-Auto-restart is enabled when you start the feed server with `--enable-agent-management`:
+Auto-restart is available when you run the feed server:
 
-**With simple_feed.py (recommended):**
+**With simple_feed.py:**
 ```bash
-python3 scripts/simple_feed.py --enable-agent-management
-```
-
-**With feed_server.py (advanced):**
-```bash
-python3 scripts/feed_server.py --enable-agent-management
+python3 scripts/simple_feed.py
 ```
 
 **Or use the run script with feed server enabled:**
@@ -52,14 +47,9 @@ python3 scripts/feed_server.py --enable-agent-management
 MEMO_RF_FEED_SERVER=1 ./run.sh
 ```
 
-The `run.sh` script automatically includes `--enable-agent-management` when starting the feed server.
-
 ### Custom Binary Path
 
-If your memo-rf binary is in a non-standard location:
-```bash
-python3 scripts/simple_feed.py --enable-agent-management --agent-binary /path/to/memo-rf
-```
+If your memo-rf binary is in a non-standard location, configure it in the feed UI or config (see docs).
 
 ## Manual Restart
 

@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { T } from './theme';
 import { TABS } from './constants/tabs';
+import Home from './components/home/Home';
 import LiveOverview from './components/live/LiveOverview';
 import ChannelDetail from './components/channels/ChannelDetail';
 import StressMap from './components/stress/StressMap';
@@ -9,6 +10,7 @@ import SignalDuration from './components/signal/SignalDuration';
 import { TOTALS } from './constants/channelMeta';
 
 const TAB_MAP = {
+  home: Home,
   live: LiveOverview,
   channels: ChannelDetail,
   stress: StressMap,
@@ -17,7 +19,7 @@ const TAB_MAP = {
 };
 
 export default function App() {
-  const [tab, setTab] = useState('live');
+  const [tab, setTab] = useState('home');
   const View = TAB_MAP[tab];
 
   return (
@@ -45,22 +47,11 @@ export default function App() {
         }}
       >
         <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
-          <div
-            style={{
-              width: 32,
-              height: 32,
-              borderRadius: 8,
-              background: `linear-gradient(135deg, ${T.orange}, ${T.red})`,
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              fontSize: 14,
-              fontWeight: 800,
-              color: '#fff',
-            }}
-          >
-            M
-          </div>
+          <img
+            src="/icon.png"
+            alt="Memo"
+            style={{ width: 32, height: 32, borderRadius: 8, display: 'block' }}
+          />
           <div>
             <div style={{ fontSize: 16, fontWeight: 800, letterSpacing: '-0.02em' }}>
               Memo <span style={{ color: T.orange }}>Radio Intelligence</span>

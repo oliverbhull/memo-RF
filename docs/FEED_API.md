@@ -397,7 +397,7 @@ The Memo-RF C++ agent is pre-configured to POST events. To enable/disable:
 Start the feed server:
 
 ```bash
-python3 scripts/feed_server.py --port 5050 --host 0.0.0.0
+python3 scripts/simple_feed.py
 ```
 
 **Options**:
@@ -498,7 +498,7 @@ curl -X POST http://localhost:5050/api/feed/notify \
 ### Events not appearing in UI
 
 **Check**:
-1. Feed server is running: `ps aux | grep feed_server`
+1. Feed server is running: `ps aux | grep simple_feed`
 2. Browser console for errors: F12 → Console
 3. SSE connection active: Look for `Connected • N exchanges` in UI
 4. POST response is `{"status": "ok"}`

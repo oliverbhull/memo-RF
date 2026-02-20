@@ -37,6 +37,22 @@ export default function TransmissionCard({ item }) {
       >
         <div>
           <span style={{ color: T.orange, fontWeight: 'bold' }}>{persona}</span>
+          {item.channel != null && item.channel >= 1 && item.channel <= 7 && (
+            <span
+              style={{
+                display: 'inline-block',
+                background: T.surface,
+                color: T.cyan,
+                padding: '2px 6px',
+                borderRadius: 8,
+                fontSize: '0.7em',
+                marginLeft: 6,
+                fontWeight: 600,
+              }}
+            >
+              CH{item.channel}
+            </span>
+          )}
           {langCode && (
             <span
               style={{

@@ -13,7 +13,7 @@ You can now test the full Memo-RF system with voice commands over the radio.
 In your terminal, run:
 
 ```bash
-cd /home/oliver/dev/memo-RF/build
+cd /path/to/memo-RF/build
 ./memo-rf
 ```
 
@@ -24,13 +24,13 @@ cd /home/oliver/dev/memo-RF/build
 If the mock server isn't running, use the helper script:
 
 ```bash
-cd /home/oliver/dev/memo-RF
-./start_mock_test.sh
+cd /path/to/memo-RF
+./scripts/start_mock_test.sh
 ```
 
 Then in another terminal:
 ```bash
-cd /home/oliver/dev/memo-RF/build
+cd /path/to/memo-RF/build
 ./memo-rf
 ```
 
@@ -121,7 +121,7 @@ Memo-RF logs will show:
 
 ### "Connection failed" errors
 - Check if mock server is running: `curl http://localhost:4890/health`
-- Restart with: `python3 test_muni_api.py &`
+- Restart with: `python3 scripts/test_muni_api.py &`
 
 ### Commands not matching
 - Check plugin loaded: Look for `[INFO] Loaded action plugin: muni` at startup
@@ -167,21 +167,21 @@ To use the real depot endpoint:
 
 ```
 You speak → Radio RX → Audio Input → VAD → Whisper STT (+vocab boost)
-                                                    ↓
-                                          "stop the robot"
-                                                    ↓
-                                          ActionDispatcher
-                                                    ↓
-                                    JsonCommandPlugin matches "estop"
-                                                    ↓
-                              HTTP POST localhost:4890/rovers/frog-0/command
-                                         {"type": "estop"}
-                                                    ↓
-                                    Mock API responds HTTP 200
-                                                    ↓
-                            TTS: "Emergency stop activated."
-                                                    ↓
-                                     Audio Output → Radio TX
+                                                   ↓
+                                         "stop the robot"
+                                                   ↓
+                                         ActionDispatcher
+                                                   ↓
+                                   JsonCommandPlugin matches "estop"
+                                                   ↓
+                             HTTP POST localhost:4890/rovers/frog-0/command
+                                        {"type": "estop"}
+                                                   ↓
+                                   Mock API responds HTTP 200
+                                                   ↓
+                           TTS: "Emergency stop activated."
+                                                   ↓
+                                    Audio Output → Radio TX
 ```
 
 No LLM, no latency, instant command execution! 🚀

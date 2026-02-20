@@ -60,7 +60,7 @@ Or from project root:
    - Register tools (log_memo, external_research, internal_search)
    - Start session recording
 
-2. **Operation**: 
+2. **Operation**:
    - Listen for speech via microphone
    - Transcribe using Whisper
    - Route to LLM (with tool support)

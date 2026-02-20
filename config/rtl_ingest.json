@@ -1,0 +1,31 @@
+{
+  "center_freq_mhz": 462.6375,
+  "sample_rate": 2400000,
+  "frequencies_mhz": [
+    462.5625,
+    462.5875,
+    462.6125,
+    462.6375,
+    462.6625,
+    462.6875,
+    462.7125
+  ],
+  "channel_labels": [
+    "Front Desk",
+    "Housekeeping",
+    "Engineering",
+    "Security",
+    "F&B",
+    "Management",
+    "Concierge"
+  ],
+  "feed_server_url": "http://localhost:5050/api/feed/notify",
+  "parakeet_model": "nvidia/parakeet-rnnt-0.6b",
+  "device": "cuda",
+  "vad": {
+    "threshold": 0.02,
+    "min_speech_ms": 400,
+    "end_silence_ms": 800,
+    "frame_duration_ms": 30
+  }
+}

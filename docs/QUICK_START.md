@@ -96,6 +96,6 @@ This tight prompt ensures Qwen translates verbatim without adding commentary.
 
 ## See Also
 
-- `PERSONA_SWITCHING.md` - Full documentation
+- [PERSONA_SWITCHING.md](PERSONA_SWITCHING.md) - Full documentation
 - `config/personas.json` - All available personas
 - `build_with_persona.sh` - Build script examples

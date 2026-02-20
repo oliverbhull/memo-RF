@@ -15,6 +15,9 @@ import Card from '../ui/Card';
 import Metric from '../ui/Metric';
 import Bar2 from '../ui/Bar2';
 import Tip from '../ui/Tip';
+import { useSimulatedCategories } from '../../hooks/useSimulatedCategories';
+import { useSimulatedInsights } from '../../hooks/useSimulatedInsights';
+import { getRequestCategoryLabel, isCategoryKey } from '../../constants/requestCategories';
 import { T, CH_COLORS } from '../../theme';
 import { CH, CH_HOURLY, CH_DAILY } from '../../constants/channelMeta';
 
@@ -22,6 +25,14 @@ export default function ChannelDetail() {
   const [sel, setSel] = useState(1);
   const d = CH[sel];
   const color = CH_COLORS[sel];
+  const { byChannel, loading: categoriesLoading, error: categoriesError } = useSimulatedCategories();
+  const { insights, loading: insightsLoading, error: insightsError } = useSimulatedInsights(sel);
+
+  const categoryCounts = byChannel[String(sel)] || {};
+  const requestBreakdownData = Object.entries(categoryCounts)
+    .filter(([key]) => isCategoryKey(key))
+    .map(([key, count]) => ({ name: getRequestCategoryLabel(key), key, count }))
+    .sort((a, b) => b.count - a.count);
 
   const hourly = Object.entries(CH_HOURLY[sel]).map(([h, v]) => ({
     h: String(h).padStart(2, '0'),
@@ -119,6 +130,61 @@ export default function ChannelDetail() {
             </div>
           ))}
         </div>
+      </Card>
+
+      <Card title="Request breakdown" sub="Request types on this channel (14-day)" span={2}>
+        {categoriesLoading && <div style={{ color: T.dim, fontSize: 12 }}>Loading...</div>}
+        {categoriesError && <div style={{ color: T.red, fontSize: 12 }}>{categoriesError}</div>}
+        {!categoriesLoading && !categoriesError && requestBreakdownData.length === 0 && (
+          <div style={{ color: T.dim, fontSize: 12 }}>No category data for this channel.</div>
+        )}
+        {!categoriesLoading && !categoriesError && requestBreakdownData.length > 0 && (
+          <ResponsiveContainer width="100%" height={Math.max(220, requestBreakdownData.length * 24)}>
+            <BarChart data={requestBreakdownData} layout="vertical" margin={{ left: 4, right: 8 }}>
+              <CartesianGrid strokeDasharray="3 3" stroke={T.border} horizontal={false} />
+              <XAxis type="number" tick={{ fill: T.muted, fontSize: 9 }} />
+              <YAxis type="category" dataKey="name" tick={{ fill: T.dim, fontSize: 10 }} width={140} />
+              <Tooltip content={<Tip />} />
+              <Bar dataKey="count" name="Requests" radius={[0, 4, 4, 0]}>
+                {requestBreakdownData.map((_, i) => (
+                  <Cell key={i} fill={color} />
+                ))}
+              </Bar>
+            </BarChart>
+          </ResponsiveContainer>
+        )}
+      </Card>
+
+      <Card title="Insights" sub="Intelligence derived from request data (14-day)" span={2}>
+        {insightsLoading && <div style={{ color: T.dim, fontSize: 12 }}>Loading...</div>}
+        {insightsError && <div style={{ color: T.red, fontSize: 12 }}>{insightsError}</div>}
+        {!insightsLoading && !insightsError && insights.length === 0 && (
+          <div style={{ color: T.dim, fontSize: 12 }}>No insights for this channel.</div>
+        )}
+        {!insightsLoading && !insightsError && insights.length > 0 && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+            {insights.map((item) => (
+              <div
+                key={item.id || item.text}
+                style={{
+                  padding: '10px 12px',
+                  background: T.surface,
+                  borderRadius: 8,
+                  borderLeft: `3px solid ${color}`,
+                }}
+              >
+                <div style={{ fontSize: 12, color: T.text, fontWeight: 600, lineHeight: 1.4 }}>
+                  {item.text}
+                </div>
+                {item.subtext && (
+                  <div style={{ fontSize: 11, color: T.muted, marginTop: 4 }}>
+                    {item.subtext}
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
       </Card>
 
       <Card title="Daily Volume Trend" sub="Transmissions per day" span={4}>

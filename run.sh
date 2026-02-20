@@ -20,7 +20,7 @@ if pkill -9 -f "build/memo-rf" 2>/dev/null; then
     echo "  ✓ Killed existing memo-rf agent"
     KILLED=1
 fi
-if pkill -9 -f "feed_server.py" 2>/dev/null; then
+if pkill -9 -f "simple_feed.py" 2>/dev/null; then
     echo "  ✓ Killed existing feed server"
     KILLED=1
 fi
@@ -48,9 +48,9 @@ trap cleanup EXIT INT TERM
 
 # Start feed server if enabled
 if [ "$FEED_SERVER_ENABLED" = "1" ]; then
-    if [ -f "scripts/feed_server.py" ]; then
+    if [ -f "scripts/simple_feed.py" ]; then
         echo "Starting feed server on port $FEED_PORT..."
-        python3 scripts/feed_server.py --port "$FEED_PORT" --enable-agent-management > /dev/null 2>&1 &
+        python3 scripts/simple_feed.py > /dev/null 2>&1 &
         FEED_PID=$!
 
         # Give it a moment to start
@@ -72,7 +72,7 @@ if [ "$FEED_SERVER_ENABLED" = "1" ]; then
             FEED_PID=""
         fi
     else
-        echo "Warning: scripts/feed_server.py not found, skipping feed server"
+        echo "Warning: scripts/simple_feed.py not found, skipping feed server"
     fi
 else
     echo "Feed server disabled (set MEMO_RF_FEED_SERVER=1 to enable)"

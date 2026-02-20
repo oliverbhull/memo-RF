@@ -8,7 +8,15 @@ from http.server import HTTPServer, BaseHTTPRequestHandler
 import json
 import csv
 import mimetypes
+import re
+from collections import defaultdict
 from pathlib import Path
+from urllib.parse import urlparse, parse_qs
+
+try:
+    from datetime import datetime
+except ImportError:
+    datetime = None
 
 # In-memory storage
 events = []
@@ -24,7 +32,7 @@ ACTIVE_PATH = CONFIG_DIR / 'active.json'
 ROBOTS_DIR = CONFIG_DIR / 'robots'
 AGENTS_DIR = CONFIG_DIR / 'agents'
 DASHBOARD_DIR = REPO_ROOT / 'dashboard_dist'
-CSV_PATH = REPO_ROOT / 'hotel_14day.csv'
+CSV_PATH = REPO_ROOT / 'data' / 'hotel_14day.csv'
 
 # department_from -> channel (align with dashboard labels)
 DEPT_TO_CHANNEL = {
@@ -87,6 +95,179 @@ def load_simulated_feed():
                 'role_to': (row.get('role_to') or '').strip(),
             })
     return out
+
+
+def load_simulated_categories():
+    """Aggregate CSV by channel and request_category (request-type rows only). Returns { "1": { "extra_towels": n, ... }, ... }."""
+    if not CSV_PATH.is_file():
+        return {}
+    by_channel = {}
+    with open(CSV_PATH, 'r', encoding='utf-8') as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+            if (row.get('transmission_type') or '').strip().lower() != 'request':
+                continue
+            dept = (row.get('department_from') or '').strip()
+            ch = DEPT_TO_CHANNEL.get(dept)
+            if ch is None:
+                continue
+            cat = (row.get('request_category') or '').strip()
+            if not cat or not cat.replace('_', '').isalnum():
+                continue
+            ch_key = str(ch)
+            if ch_key not in by_channel:
+                by_channel[ch_key] = {}
+            by_channel[ch_key][cat] = by_channel[ch_key].get(cat, 0) + 1
+    return by_channel
+
+
+# Human-readable category names for insights
+CATEGORY_LABELS = {
+    'extra_towels': 'Extra towels',
+    'room_cleaning_request': 'Room cleaning',
+    'maintenance_issue_found': 'Maintenance issue',
+    'luggage_assistance': 'Luggage assistance',
+    'early_checkin_prep': 'Early check-in prep',
+    'hvac_issue': 'HVAC',
+    'plumbing_issue': 'Plumbing',
+    'noise_complaint': 'Noise complaint',
+    'room_ready': 'Room ready',
+    'extra_pillows': 'Extra pillows',
+    'guest_lockout': 'Guest lockout',
+}
+
+
+def _parse_room(location):
+    """Extract room number from location string (e.g. 'Room 704' -> 704). Returns None if not a room."""
+    if not location:
+        return None
+    m = re.match(r'Room\s*(\d+)', location.strip(), re.I)
+    return int(m.group(1)) if m else None
+
+
+def load_simulated_insights(channel):
+    """Derive insight tidbits for a channel from CSV (request-type rows only). Returns list of { id, text, subtext }."""
+    if not CSV_PATH.is_file() or channel is None:
+        return []
+    ch = int(channel)
+    requests = []
+    with open(CSV_PATH, 'r', encoding='utf-8') as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+            if (row.get('transmission_type') or '').strip().lower() != 'request':
+                continue
+            dept = (row.get('department_from') or '').strip()
+            if DEPT_TO_CHANNEL.get(dept) != ch:
+                continue
+            requests.append({
+                'timestamp': (row.get('timestamp') or '').strip(),
+                'request_category': (row.get('request_category') or '').strip(),
+                'location': (row.get('location') or '').strip(),
+                'priority': (row.get('priority') or '').strip().lower(),
+            })
+    if not requests:
+        return []
+
+    insights = []
+    # Peak hour
+    if datetime:
+        hour_counts = defaultdict(int)
+        for r in requests:
+            ts = r.get('timestamp') or ''
+            try:
+                dt = datetime.fromisoformat(ts.replace('Z', '+00:00'))
+                hour_counts[dt.hour] += 1
+            except Exception:
+                continue
+        if hour_counts:
+            peak_hour = max(hour_counts, key=hour_counts.get)
+            h12 = peak_hour if peak_hour <= 12 else peak_hour - 12
+            am_pm = 'AM' if peak_hour < 12 else 'PM'
+            if peak_hour == 0:
+                h12, am_pm = 12, 'AM'
+            insights.append({
+                'id': 'peak_hour',
+                'text': 'Most requests occur in the morning (6 AM–12 PM).' if peak_hour < 12 else 'Most requests occur in the afternoon (12–6 PM).',
+                'subtext': 'Peak hour: {} {}'.format(h12, am_pm),
+            })
+
+    # Top category
+    cat_counts = defaultdict(int)
+    for r in requests:
+        c = (r.get('request_category') or '').strip()
+        if c and c.replace('_', '').isalnum():
+            cat_counts[c] += 1
+    if cat_counts:
+        total = sum(cat_counts.values())
+        top_cat, top_n = max(cat_counts.items(), key=lambda x: x[1])
+        label = CATEGORY_LABELS.get(top_cat, top_cat.replace('_', ' ').title())
+        pct = round(100 * top_n / total) if total else 0
+        insights.append({
+            'id': 'top_category',
+            'text': '{} is the most common request type.'.format(label),
+            'subtext': '{} requests ({}% of this channel)'.format(top_n, pct),
+        })
+
+    # Morning vs afternoon share
+    if datetime and requests:
+        morning = sum(1 for r in requests for _ in [r.get('timestamp')] if _ and (lambda t: datetime.fromisoformat(t.replace('Z', '+00:00')).hour < 12 if datetime else False)(_))
+        # Safer loop
+        morning = 0
+        for r in requests:
+            ts = r.get('timestamp') or ''
+            try:
+                dt = datetime.fromisoformat(ts.replace('Z', '+00:00'))
+                if dt.hour < 12:
+                    morning += 1
+            except Exception:
+                pass
+        total = len(requests)
+        if total:
+            pct = round(100 * morning / total)
+            if pct >= 55:
+                insights.append({
+                    'id': 'time_of_day',
+                    'text': 'Requests usually take place in the morning.',
+                    'subtext': '{}% of requests occur before noon.'.format(pct),
+                })
+            elif pct <= 45:
+                insights.append({
+                    'id': 'time_of_day',
+                    'text': 'Requests usually take place in the afternoon.',
+                    'subtext': '{}% of requests occur after noon.'.format(100 - pct),
+                })
+
+    # Maintenance/HVAC/plumbing concentration by room range
+    maintenance_cats = {'plumbing_issue', 'hvac_issue', 'maintenance_issue_found'}
+    maint = [r for r in requests if (r.get('request_category') or '').strip() in maintenance_cats]
+    if len(maint) >= 5:
+        room_buckets = defaultdict(int)  # 4 -> 4xx, 7 -> 7xx
+        for r in maint:
+            room = _parse_room(r.get('location') or '')
+            if room is not None:
+                floor = room // 100
+                room_buckets[floor] += 1
+        if room_buckets:
+            top_floor = max(room_buckets, key=room_buckets.get)
+            n = room_buckets[top_floor]
+            insights.append({
+                'id': 'location_concentration',
+                'text': 'Plumbing and HVAC-related requests are concentrated in the {}xx room range.'.format(top_floor),
+                'subtext': '{} of {} maintenance requests in that area.'.format(n, len(maint)),
+            })
+
+    # Priority mix
+    high = sum(1 for r in requests if (r.get('priority') or '').strip() == 'high')
+    total = len(requests)
+    if total and high > 0:
+        pct = round(100 * high / total)
+        insights.append({
+            'id': 'priority',
+            'text': 'A notable share of requests are high priority.',
+            'subtext': '{}% of requests marked high priority ({} requests).'.format(pct, high),
+        })
+
+    return insights[:6]
 
 
 class SimpleFeedHandler(BaseHTTPRequestHandler):
@@ -328,7 +509,8 @@ class SimpleFeedHandler(BaseHTTPRequestHandler):
                             'transcript': event.get('data', ''),
                             'response': '',
                             'persona_name': event.get('persona_name', 'Unknown'),
-                            'language': event.get('language', 'en')
+                            'language': event.get('language', 'en'),
+                            'channel': event.get('channel'),
                         }
                         exchanges.append(exchange)
 
@@ -345,6 +527,24 @@ class SimpleFeedHandler(BaseHTTPRequestHandler):
                 try:
                     items = load_simulated_feed()
                     self.send_json({'items': items})
+                except Exception as e:
+                    self.send_json({'error': str(e)}, 500)
+                return
+            if path == '/api/simulated/categories':
+                try:
+                    by_channel = load_simulated_categories()
+                    self.send_json(by_channel)
+                except Exception as e:
+                    self.send_json({'error': str(e)}, 500)
+                return
+            if path.startswith('/api/simulated/insights'):
+                try:
+                    parsed = urlparse(self.path)
+                    qs = parse_qs(parsed.query)
+                    ch = qs.get('channel', ['1'])[0]
+                    ch = int(ch) if str(ch).isdigit() else 1
+                    insights = load_simulated_insights(ch)
+                    self.send_json({'insights': insights})
                 except Exception as e:
                     self.send_json({'error': str(e)}, 500)
                 return

@@ -12,8 +12,15 @@ fi
 mkdir -p build
 cd build
 
+# Pass WHISPER_DIR from environment so Jetson/CI can do: export WHISPER_DIR=... && ./build.sh
+CMAKE_OPTS=""
+if [ -n "$WHISPER_DIR" ]; then
+  CMAKE_OPTS="-DWHISPER_DIR=$WHISPER_DIR"
+  echo "Using WHISPER_DIR=$WHISPER_DIR"
+fi
+
 # Configure with CMake
-cmake ..
+cmake $CMAKE_OPTS ..
 
 # Build
 make -j$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 4)

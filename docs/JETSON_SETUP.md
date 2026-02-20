@@ -2,6 +2,24 @@
 
 Short guide to build and run memo-RF on Linux (Ubuntu) or Nvidia Jetson Orin Nano.
 
+## Minimal path (pull → build → run)
+
+**First time on the Jetson (once per machine):**
+
+1. `./scripts/setup_jetson.sh` — installs apt deps (build-essential, portaudio, libcurl, etc.).
+2. Build whisper.cpp (see section 2/3 below; use `./scripts/build_whisper_jetson_cuda.sh` for CUDA on Jetson).
+3. Copy or create `config/config.json` (set `stt.model_path`, `tts.voice_path`, `llm.endpoint`). Use `config/config.json.example` as a template.
+4. `export WHISPER_DIR=/path/to/whisper.cpp && ./build.sh`
+
+**After every `git pull`:**
+
+1. `./build.sh` (or `export WHISPER_DIR=/path/to/whisper.cpp && ./build.sh` if WHISPER_DIR is not in your shell profile).
+2. Run: `./run.sh` or `cd build && ./memo-rf ../config` (and start the feed server if needed: `python3 scripts/simple_feed.py`).
+
+No other steps unless you add optional pieces (RTL ingest, etc.); see below.
+
+---
+
 ## 1. System dependencies
 
 ```bash
@@ -169,8 +187,17 @@ cd build
    rsync -av --exclude build /path/to/memo-RF user@jetson:~/memo-RF/
    rsync -av ~/models user@jetson:~/
    ```
-2. On the Jetson: install system deps, build whisper.cpp, install Piper, build memo-RF, then configure and run as above.
-3. Use the same `config.json` paths with `~` so they resolve to the Jetson user’s home.
+2. **Rebuild** if you pulled C++ changes: `./build.sh` (or `cd build && make`).
+3. On the Jetson: install system deps, build whisper.cpp, install Piper, build memo-RF, then configure and run as above.
+4. Use the same `config.json` paths with `~` so they resolve to the Jetson user's home.
+
+### Additional setup for RTL ingest (optional)
+
+If you use the **RTL-SDR 7-channel ingest** (`scripts/run_rtl_ingest.py`):
+
+- **RTL-SDR on Linux/Jetson:** Install `sudo apt-get install -y rtl-sdr librtlsdr-dev`. Blacklist the DVB driver: `echo 'blacklist dvb_usb_rtl28xxu' | sudo tee /etc/modprobe.d/blacklist-rtl.conf`, then reload. Add udev rules so the device is accessible without root (see [rtl-sdr repo](https://github.com/osmocom/rtl-sdr)); replug the dongle and optionally run `rtl_test -t`.
+- **Python deps:** `pip install -r scripts/rtl_ingest/requirements.txt`. On Jetson, NeMo may need a Jetson-compatible PyTorch first; use `"device": "cuda"` in `config/rtl_ingest.json` for Parakeet on GPU.
+- **Config:** Edit `config/rtl_ingest.json` with your 7 frequencies and `feed_server_url` if needed.
 
 ---
 

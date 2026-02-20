@@ -24,6 +24,7 @@ sessions/
 *.tmp
 *.swp
 *~
+*.backup
 
 # IDE files
 .vscode/
