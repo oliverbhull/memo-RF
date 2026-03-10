@@ -119,6 +119,20 @@ public:
             Logger::info("Agent persona: " + config_.llm.agent_persona);
         }
         Logger::info("Listening for speech...");
+
+        // Announce system startup over the radio
+        {
+            Logger::info("Broadcasting startup announcement...");
+            AudioBuffer startup_audio = tts_->synth_vox("Memo system active");
+            if (!startup_audio.empty()) {
+                tx_->transmit(startup_audio);
+                // Wait for playback to finish before entering the main loop
+                while (!audio_io_->is_playback_complete()) {
+                    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+                }
+                transmission_end_time_ = std::chrono::steady_clock::now();
+            }
+        }
         
         // State tracking
         int utterance_id = 0;
