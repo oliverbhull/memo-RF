@@ -34,7 +34,21 @@ else
     echo "NetBird client is already installed."
 fi
 
-# 4. Idempotent Connection Check
+# 4. Infinite Auto-Recovery Configuration
+echo "Configuring infinite auto-reconnect..."
+sudo mkdir -p /etc/systemd/system/netbird.service.d
+cat <<EOF | sudo tee /etc/systemd/system/netbird.service.d/override.conf
+[Service]
+Restart=always
+RestartSec=10s
+StartLimitIntervalSec=0
+EOF
+
+# Reload to pick up changes and restart to apply them
+sudo systemctl daemon-reload
+sudo systemctl restart netbird
+
+# 5. Idempotent Connection Check
 CURRENT_STATUS=$(netbird status 2>/dev/null || echo "Disconnected")
 
 if echo "$CURRENT_STATUS" | grep -q "Connected"; then
@@ -47,7 +61,7 @@ else
         --hostname "$(hostname)"
 fi
 
-# 5. Capture IP and Log Results
+# 6. Capture IP and Log Results
 NB_IP=$(netbird status | grep "NetBird IP" | awk '{print $3}' | cut -d'/' -f1)
 echo "$(date): Setup successful. IP: $NB_IP" | sudo tee -a $LOG_FILE
 
@@ -57,5 +71,5 @@ echo "Device Hostname: $(hostname)"
 echo "NetBird IP:      $NB_IP"
 echo "Log saved to:    $LOG_FILE"
 echo "------------------------------------------"
-echo "\n"
-echo "Device accessible remotely via https://app.netbird.io/peers"
+echo ""
+echo "Device accessible remotely via: https://app.netbird.io/peers"
